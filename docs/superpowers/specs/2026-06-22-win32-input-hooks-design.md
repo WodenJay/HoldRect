@@ -139,7 +139,7 @@ Test the pure decision functions directly. No Win32 types needed — just `u32` 
 | 5 | LeftDown, no suppress | false | false | false | WM_LBUTTONDOWN | (None, false) — pass through |
 | 6 | LeftDown, suppress, Ctrl held | true | false | true | WM_LBUTTONDOWN | (Some(MouseButtonDown), true) — suppress |
 | 7 | LeftDown, suppress, Ctrl NOT held | true | false | false | WM_LBUTTONDOWN | (None, false) — pass through |
-| 8 | MouseMove, drag in progress | false | true | false | WM_MOUSEMOVE | (Some(MouseMove), true) — suppress |
+| 8 | MouseMove, drag in progress | false | true | false | WM_MOUSEMOVE | (Some(MouseMove), false) — pass through — cursor stays responsive |
 | 9 | MouseMove, no drag | true | false | true | WM_MOUSEMOVE | (None, false) — pass through |
 | 10 | LeftUp, drag in progress | false | true | false | WM_LBUTTONUP | (Some(MouseButtonUp), true) — suppress, clear drag |
 | 11 | LeftUp, suppress but no drag | true | false | true | WM_LBUTTONUP | (None, false) — pass through |

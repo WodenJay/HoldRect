@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn full_ctrl_drag_sequence() {
         // Track shared state as the hook procs would
-        let mut should_suppress = false;
+        let mut should_suppress: bool;
         let mut drag_in_progress = false;
 
         // Step 1: Ctrl pressed — keyboard hook fires
@@ -293,6 +293,8 @@ mod tests {
         let event = decide_keyboard(VK_LCONTROL.0 as u32, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
         should_suppress = false; // hook proc stores this
+
+        let _ = (&should_suppress, &drag_in_progress);
     }
 
     #[test]
