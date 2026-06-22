@@ -60,7 +60,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         set_click_through(&window);
 
-        // Set color-key transparency AFTER set_click_through (needs WS_EX_LAYERED)
+        // Set color-key transparency — tells DWM to make COLOR_KEY pixels transparent.
+        // Must come after set_click_through (needs WS_EX_LAYERED).
         #[cfg(windows)]
         set_layered_color_key(&window);
 
@@ -211,48 +212,91 @@ fn show_window(window: &Window) {
     }
 }
 
-/// Draw border rectangle using GDI.
-/// Mouse coordinates are screen-absolute; convert to window-local.
+/// Draw border rectangle using GDI + UpdateLayeredWindow.
+/// Creates a DIB section, draws with GDI, pushes to DWM via UpdateLayeredWindow.
 #[cfg(windows)]
 fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
-    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Foundation::{COLORREF, POINT, RECT};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     let hwnd = get_hwnd(window);
     unsafe {
-        // Get window position for coordinate conversion
         let mut wr = RECT::default();
         let _ = GetWindowRect(hwnd, &mut wr);
+        let w = (wr.right - wr.left) as u32;
+        let h = (wr.bottom - wr.top) as u32;
+        if w == 0 || h == 0 { return; }
 
-        // Convert screen coords to window-local
+        // Create 32-bit DIB section (bottom-up, BGRA)
+        let bi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: h as i32, // positive = bottom-up
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0 as u32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut u8 = std::ptr::null_mut();
+        let hbmp = CreateDIBSection(None, &bi, DIB_RGB_COLORS, &mut bits as *mut *mut u8 as _, None, 0)
+            .expect("CreateDIBSection failed");
+
+        // Fill with color key (BGRA layout: B=0xFF, G=0x00, R=0xFF, A=0x00)
+        let row_bytes = w as usize * 4;
+        for y in 0..h as usize {
+            let row = bits.add(y * row_bytes);
+            for x in 0..w as usize {
+                let px = row.add(x * 4);
+                *px.add(0) = 0xFF; // B
+                *px.add(1) = 0x00; // G
+                *px.add(2) = 0xFF; // R
+                *px.add(3) = 0x00; // A
+            }
+        }
+
+        let mem_dc = CreateCompatibleDC(None);
+        let old_bmp = SelectObject(mem_dc, hbmp);
+
+        // Draw red border with GDI
         let (x0, y0, x1, y1) = normalize_rect(start, current);
         let x0 = x0 - wr.left;
         let y0 = y0 - wr.top;
         let x1 = x1 - wr.left;
         let y1 = y1 - wr.top;
 
-        let hdc = GetDC(hwnd);
-
-        // Fill entire window with color key (transparent background)
-        let full = RECT { left: 0, top: 0, right: wr.right - wr.left, bottom: wr.bottom - wr.top };
-        let key_brush = CreateSolidBrush(COLORREF(COLOR_KEY));
-        let _ = FillRect(hdc, &full, key_brush);
-        let _ = DeleteObject(key_brush);
-
-        // Draw border: red pen, null brush (no interior fill)
         let pen = CreatePen(PS_SOLID, BORDER_WIDTH, COLORREF(BORDER_COLOR_GDI));
-        let old_pen = SelectObject(hdc, pen);
+        let old_pen = SelectObject(mem_dc, pen);
         let null_brush = GetStockObject(NULL_BRUSH);
-        let old_brush = SelectObject(hdc, null_brush);
+        let old_brush = SelectObject(mem_dc, null_brush);
 
-        let _ = Rectangle(hdc, x0, y0, x1, y1);
+        let _ = Rectangle(mem_dc, x0, y0, x1, y1);
 
-        // Restore and cleanup
-        SelectObject(hdc, old_pen);
-        SelectObject(hdc, old_brush);
+        // Push bitmap to layered window (DWM composites from this)
+        let origin = POINT { x: 0, y: 0 };
+        let size = windows::Win32::Foundation::SIZE { cx: w as i32, cy: h as i32 };
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            HDC::default(),      // hdcdst: use default
+            Some(&origin as *const POINT),   // pptdst: keep current position
+            Some(&size as *const _),          // psize: window size
+            mem_dc,              // hdcsrc: DC with our bitmap
+            Some(&origin as *const POINT),   // pptsrc: source origin
+            COLORREF(COLOR_KEY), // crkey: color key for transparency
+            None,                // pblend: no alpha blending
+            ULW_COLORKEY,        // dwflags: use color-key
+        );
+
+        // Cleanup
+        SelectObject(mem_dc, old_pen);
+        SelectObject(mem_dc, old_brush);
+        SelectObject(mem_dc, old_bmp);
         let _ = DeleteObject(pen);
-        let _ = ReleaseDC(hwnd, hdc);
+        let _ = DeleteDC(mem_dc);
+        let _ = DeleteObject(hbmp);
     }
 }
 
@@ -291,5 +335,11 @@ mod tests {
     #[test]
     fn normalize_rect_already_normalized() {
         assert_eq!(normalize_rect((0, 0), (1920, 1080)), (0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn border_color_does_not_match_color_key() {
+        // If border color matches color key, border would be transparent (invisible)
+        assert_ne!(BORDER_COLOR_GDI, COLOR_KEY, "border color must differ from color key");
     }
 }
