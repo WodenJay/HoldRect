@@ -10,6 +10,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::raw_window_handle::HasWindowHandle;
 use winit::window::{Window, WindowId};
 
+#[cfg(windows)]
+use winit::platform::windows::WindowAttributesExtWindows;
+
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
@@ -51,7 +54,8 @@ impl ApplicationHandler for App {
             .with_title("HoldRect")
             .with_transparent(true)
             .with_decorations(false)
-            .with_visible(false); // start hidden
+            .with_visible(false) // start hidden
+            .with_skip_taskbar(true);
         let window = event_loop.create_window(attrs).expect("Failed to create window");
 
         // Set WS_EX_TRANSPARENT for mouse passthrough
@@ -194,9 +198,7 @@ fn set_click_through(window: &Window) {
             ex_style
             | WS_EX_TRANSPARENT.0 as isize
             | WS_EX_LAYERED.0 as isize
-            | WS_EX_TOPMOST.0 as isize
-            | WS_EX_TOOLWINDOW.0 as isize
-            | WS_EX_NOACTIVATE.0 as isize,
+            | WS_EX_TOPMOST.0 as isize,
         );
     }
 }
