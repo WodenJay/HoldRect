@@ -122,6 +122,10 @@ fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
 
 /// Pure decision function for mouse events.
 /// Returns (Option<InputEvent>, should_suppress_this_event).
+///
+/// Suppression policy: only suppress button events (LButtonDown, LButtonUp).
+/// Mouse moves pass through so the cursor stays responsive — the overlay
+/// tracks position via the channel regardless.
 fn decide_mouse(
     msg: u32,
     pt: (i32, i32),
@@ -129,13 +133,14 @@ fn decide_mouse(
     drag_in_progress: bool,
     ctrl_held: bool,
 ) -> (Option<InputEvent>, bool) {
-    // If drag in progress, only LeftUp matters (to end the drag)
+    // If drag in progress, track position and handle button release
     if drag_in_progress {
         if msg == WM_LBUTTONUP {
             return (Some(InputEvent::MouseButtonUp { x: pt.0, y: pt.1 }), true);
         }
         if msg == WM_MOUSEMOVE {
-            return (Some(InputEvent::MouseMove { x: pt.0, y: pt.1 }), true);
+            // Track position but don't suppress — let cursor move freely
+            return (Some(InputEvent::MouseMove { x: pt.0, y: pt.1 }), false);
         }
         // Other events during drag: pass through (don't suppress right-click etc.)
         return (None, false);
@@ -212,10 +217,10 @@ mod tests {
     }
 
     #[test]
-    fn mouse_move_drag_in_progress_is_suppressed() {
+    fn mouse_move_drag_in_progress_tracks_but_passes_through() {
         let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (300, 400), false, true, false);
         assert_eq!(event, Some(InputEvent::MouseMove { x: 300, y: 400 }));
-        assert!(suppress);
+        assert!(!suppress, "MouseMove must pass through during drag so cursor stays responsive");
     }
 
     #[test]
@@ -251,5 +256,79 @@ mod tests {
         let (event, suppress) = decide_mouse(WM_RBUTTONDOWN, (100, 200), false, true, false);
         assert_eq!(event, None);
         assert!(!suppress);
+    }
+
+    // --- Full Ctrl+drag sequence test (simulates hook procs calling decide_* in order) ---
+
+    #[test]
+    fn full_ctrl_drag_sequence() {
+        // Track shared state as the hook procs would
+        let mut should_suppress = false;
+        let mut drag_in_progress = false;
+
+        // Step 1: Ctrl pressed — keyboard hook fires
+        let event = decide_keyboard(VK_LCONTROL.0 as u32, true);
+        assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
+        should_suppress = true; // hook proc stores this
+
+        // Step 2: Left button down while Ctrl held, ctrl_held=true
+        let ctrl = true; // GetAsyncKeyState(VK_CONTROL) would return true
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 100, y: 200 }));
+        assert!(suppress, "LButtonDown should be suppressed when Ctrl+suppress active");
+        drag_in_progress = true; // hook proc stores this on suppress+LButtonDown
+
+        // Step 3: Mouse move during drag (tracks but passes through)
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (300, 400), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, Some(InputEvent::MouseMove { x: 300, y: 400 }));
+        assert!(!suppress, "MouseMove must pass through during drag so cursor stays responsive");
+
+        // Step 4: Left button up during drag
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 500, y: 600 }));
+        assert!(suppress, "LButtonUp should be suppressed during drag");
+        drag_in_progress = false; // hook proc stores this on suppress+LButtonUp
+
+        // Step 5: Ctrl released — keyboard hook fires
+        let event = decide_keyboard(VK_LCONTROL.0 as u32, false);
+        assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
+        should_suppress = false; // hook proc stores this
+    }
+
+    #[test]
+    fn ctrl_held_mouse_moves_pass_through_before_drag() {
+        // When Ctrl is held but no drag started yet, mouse moves must pass through
+        let should_suppress = true;
+        let drag_in_progress = false;
+        let ctrl = true;
+
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (100, 200), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, None, "MouseMove must NOT generate event before drag starts");
+        assert!(!suppress, "MouseMove must pass through before drag starts");
+    }
+
+    #[test]
+    fn ctrl_released_before_mouse_up_drag_still_suppressed() {
+        // Race condition: Ctrl released before mouse button up during drag
+        // Drag should still be suppressed (DRAG_IN_PROGRESS takes priority)
+        let should_suppress = false; // Ctrl was released
+        let drag_in_progress = true;  // but drag is still in progress
+        let ctrl = false;             // Ctrl no longer held
+
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 500, y: 600 }));
+        assert!(suppress, "LButtonUp must be suppressed even if Ctrl released during drag");
+    }
+
+    #[test]
+    fn ctrl_released_mouse_move_during_drag_passes_through() {
+        // Ctrl released mid-drag, mouse move still tracks position but passes through
+        let should_suppress = false;
+        let drag_in_progress = true;
+        let ctrl = false;
+
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (400, 500), should_suppress, drag_in_progress, ctrl);
+        assert_eq!(event, Some(InputEvent::MouseMove { x: 400, y: 500 }));
+        assert!(!suppress, "MouseMove must pass through during drag even if Ctrl released");
     }
 }
