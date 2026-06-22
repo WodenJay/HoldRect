@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::raw_window_handle::HasWindowHandle;
 use winit::window::{Window, WindowId};
 
@@ -82,6 +82,10 @@ impl ApplicationHandler for App {
             }
             _ => {}
         }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        // Woken by input thread — about_to_wait will drain the channel next.
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -187,7 +191,12 @@ fn set_click_through(window: &Window) {
         SetWindowLongPtrW(
             hwnd,
             GWL_EXSTYLE,
-            ex_style | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize | WS_EX_TOPMOST.0 as isize,
+            ex_style
+            | WS_EX_TRANSPARENT.0 as isize
+            | WS_EX_LAYERED.0 as isize
+            | WS_EX_TOPMOST.0 as isize
+            | WS_EX_TOOLWINDOW.0 as isize
+            | WS_EX_NOACTIVATE.0 as isize,
         );
     }
 }
@@ -212,9 +221,15 @@ fn show_window(window: &Window) {
     }
 }
 
-/// Run the overlay event loop. Call from main thread.
-pub fn run_overlay(input_rx: Receiver<InputEvent>) {
+/// Create the overlay event loop and proxy. Caller owns the event loop.
+pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let proxy = event_loop.create_proxy();
+    (event_loop, proxy)
+}
+
+/// Run the overlay event loop on the main thread. Blocks until exit.
+pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>) {
     let mut app = App::new(input_rx);
     event_loop.run_app(&mut app).expect("Event loop error");
 }

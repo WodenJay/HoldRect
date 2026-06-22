@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::input::start_input_listener;
-use crate::overlay::run_overlay;
+use crate::overlay::{create_event_loop, run_overlay};
 use crate::state::InputEvent;
 use crate::tray::{start_tray, AppExit};
 
@@ -18,6 +18,9 @@ fn main() {
     #[cfg(windows)]
     set_dpi_awareness();
 
+    // Create event loop and proxy for waking it from other threads
+    let (event_loop, proxy) = create_event_loop();
+
     // Channel: rdev input -> main event loop
     let (input_tx, input_rx) = mpsc::channel::<InputEvent>();
 
@@ -25,8 +28,9 @@ fn main() {
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
 
     // Start rdev input listener in background thread
+    // proxy wakes the event loop after each input event
     thread::spawn(move || {
-        start_input_listener(input_tx);
+        start_input_listener(input_tx, proxy);
     });
 
     // Start system tray (keeps TrayIcon alive)
@@ -39,7 +43,7 @@ fn main() {
     });
 
     // Run overlay on main thread (winit requires main thread)
-    run_overlay(input_rx);
+    run_overlay(event_loop, input_rx);
 
     // If overlay exits normally (window closed), terminate the process.
     // The exit_rx thread only handles tray-initiated quit.

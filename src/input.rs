@@ -2,6 +2,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
 use rdev::{Event, EventType, Key};
+use winit::event_loop::EventLoopProxy;
 
 use crate::state::InputEvent;
 
@@ -10,8 +11,9 @@ use crate::state::InputEvent;
 static LAST_POS: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
 
 /// Start global input listener.
-/// Sends InputEvent through the channel. Blocks the calling thread until listener ends.
-pub fn start_input_listener(tx: Sender<InputEvent>) {
+/// Sends InputEvent through the channel and wakes the event loop via proxy.
+/// Blocks the calling thread until listener ends.
+pub fn start_input_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>) {
     // rdev::listen blocks the current thread, so caller should spawn this
     rdev::listen(move |event: Event| {
         let input_event = match event.event_type {
@@ -39,6 +41,8 @@ pub fn start_input_listener(tx: Sender<InputEvent>) {
         };
         if let Some(event) = input_event {
             let _ = tx.send(event);
+            // Wake the winit event loop so it drains the channel in about_to_wait
+            let _ = proxy.send_event(());
         }
     })
     .expect("Failed to start input listener");
