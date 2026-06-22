@@ -21,8 +21,8 @@ const BORDER_WIDTH: i32 = 4;
 const TRANSPARENT: u32 = 0x00000000;
 
 pub struct App {
-    window: Option<Window>,
     surface: Option<Surface<&'static Window, &'static Window>>,
+    window: Option<Window>,
     state: AppState,
     input_rx: Receiver<InputEvent>,
 }
@@ -30,8 +30,8 @@ pub struct App {
 impl App {
     pub fn new(input_rx: Receiver<InputEvent>) -> Self {
         Self {
-            window: None,
             surface: None,
+            window: None,
             state: AppState::default(),
             input_rx,
         }
@@ -186,7 +186,7 @@ fn set_click_through(window: &Window) {
         SetWindowLongPtrW(
             hwnd,
             GWL_EXSTYLE,
-            ex_style | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize,
+            ex_style | WS_EX_TRANSPARENT.0 as isize | WS_EX_LAYERED.0 as isize | WS_EX_TOPMOST.0 as isize,
         );
     }
 }
