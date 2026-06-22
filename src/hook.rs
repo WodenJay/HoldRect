@@ -76,9 +76,9 @@ unsafe extern "system" fn mouse_hook_proc(
         let ms = *(l_param.0 as *const MSLLHOOKSTRUCT);
         let msg = w_param.0 as u32;
         let pt = (ms.pt.x, ms.pt.y);
-        // VK_CONTROL (0x11) catches EITHER Ctrl key via GetAsyncKeyState,
-        // unlike VK_LCONTROL/VK_RCONTROL which are per-key. Intentional.
-        let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) & 0x8000u16 as i16 != 0;
+        // VK_MENU (0x12) catches EITHER Alt key via GetAsyncKeyState,
+        // unlike VK_LMENU/VK_RMENU which are per-key. Intentional.
+        let ctrl = GetAsyncKeyState(VK_MENU.0 as i32) & 0x8000u16 as i16 != 0;
         let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
 
@@ -113,8 +113,8 @@ unsafe extern "system" fn mouse_hook_proc(
 
 // Pure decision function — no Win32 side effects, fully unit-testable
 fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
-    let is_ctrl = vk_code == VK_LCONTROL.0 as u32 || vk_code == VK_RCONTROL.0 as u32;
-    if !is_ctrl {
+    let is_alt = vk_code == VK_LMENU.0 as u32 || vk_code == VK_RMENU.0 as u32;
+    if !is_alt {
         return None;
     }
     Some(InputEvent::ModifierChanged { pressed: is_key_down })
@@ -164,31 +164,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ctrl_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_LCONTROL.0 as u32, true);
+    fn alt_down_returns_modifier_pressed() {
+        let result = decide_keyboard(VK_LMENU.0 as u32, true);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
-    fn ctrl_up_returns_modifier_released() {
-        let result = decide_keyboard(VK_LCONTROL.0 as u32, false);
+    fn alt_up_returns_modifier_released() {
+        let result = decide_keyboard(VK_LMENU.0 as u32, false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
-    fn right_ctrl_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_RCONTROL.0 as u32, true);
+    fn right_alt_down_returns_modifier_pressed() {
+        let result = decide_keyboard(VK_RMENU.0 as u32, true);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
-    fn non_ctrl_key_returns_none() {
+    fn non_alt_key_returns_none() {
         let result = decide_keyboard(VK_LSHIFT.0 as u32, true);
         assert_eq!(result, None);
     }
 
     #[test]
-    fn non_ctrl_key_up_returns_none() {
+    fn non_alt_key_up_returns_none() {
         let result = decide_keyboard(0x41, false); // 'A' key
         assert_eq!(result, None);
     }
@@ -258,39 +258,39 @@ mod tests {
         assert!(!suppress);
     }
 
-    // --- Full Ctrl+drag sequence test (simulates hook procs calling decide_* in order) ---
+    // --- Full Alt+drag sequence test (simulates hook procs calling decide_* in order) ---
 
     #[test]
-    fn full_ctrl_drag_sequence() {
+    fn full_alt_drag_sequence() {
         // Track shared state as the hook procs would
         let mut should_suppress: bool;
         let mut drag_in_progress = false;
 
-        // Step 1: Ctrl pressed — keyboard hook fires
-        let event = decide_keyboard(VK_LCONTROL.0 as u32, true);
+        // Step 1: Alt pressed — keyboard hook fires
+        let event = decide_keyboard(VK_LMENU.0 as u32, true);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
         should_suppress = true; // hook proc stores this
 
-        // Step 2: Left button down while Ctrl held, ctrl_held=true
-        let ctrl = true; // GetAsyncKeyState(VK_CONTROL) would return true
-        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), should_suppress, drag_in_progress, ctrl);
+        // Step 2: Left button down while Alt held, alt_held=true
+        let alt = true; // GetAsyncKeyState(VK_MENU) would return true
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), should_suppress, drag_in_progress, alt);
         assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 100, y: 200 }));
-        assert!(suppress, "LButtonDown should be suppressed when Ctrl+suppress active");
+        assert!(suppress, "LButtonDown should be suppressed when Alt+suppress active");
         drag_in_progress = true; // hook proc stores this on suppress+LButtonDown
 
         // Step 3: Mouse move during drag (tracks but passes through)
-        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (300, 400), should_suppress, drag_in_progress, ctrl);
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (300, 400), should_suppress, drag_in_progress, alt);
         assert_eq!(event, Some(InputEvent::MouseMove { x: 300, y: 400 }));
         assert!(!suppress, "MouseMove must pass through during drag so cursor stays responsive");
 
         // Step 4: Left button up during drag
-        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, ctrl);
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, alt);
         assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 500, y: 600 }));
         assert!(suppress, "LButtonUp should be suppressed during drag");
         drag_in_progress = false; // hook proc stores this on suppress+LButtonUp
 
-        // Step 5: Ctrl released — keyboard hook fires
-        let event = decide_keyboard(VK_LCONTROL.0 as u32, false);
+        // Step 5: Alt released — keyboard hook fires
+        let event = decide_keyboard(VK_LMENU.0 as u32, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
         should_suppress = false; // hook proc stores this
 
@@ -298,33 +298,33 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_held_mouse_moves_pass_through_before_drag() {
-        // When Ctrl is held but no drag started yet, mouse moves must pass through
+    fn alt_held_mouse_moves_pass_through_before_drag() {
+        // When Alt is held but no drag started yet, mouse moves must pass through
         let should_suppress = true;
         let drag_in_progress = false;
-        let ctrl = true;
+        let alt = true;
 
-        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (100, 200), should_suppress, drag_in_progress, ctrl);
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (100, 200), should_suppress, drag_in_progress, alt);
         assert_eq!(event, None, "MouseMove must NOT generate event before drag starts");
         assert!(!suppress, "MouseMove must pass through before drag starts");
     }
 
     #[test]
-    fn ctrl_released_before_mouse_up_drag_still_suppressed() {
-        // Race condition: Ctrl released before mouse button up during drag
+    fn alt_released_before_mouse_up_drag_still_suppressed() {
+        // Race condition: Alt released before mouse button up during drag
         // Drag should still be suppressed (DRAG_IN_PROGRESS takes priority)
-        let should_suppress = false; // Ctrl was released
+        let should_suppress = false; // Alt was released
         let drag_in_progress = true;  // but drag is still in progress
-        let ctrl = false;             // Ctrl no longer held
+        let alt = false;              // Alt no longer held
 
-        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, ctrl);
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (500, 600), should_suppress, drag_in_progress, alt);
         assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 500, y: 600 }));
-        assert!(suppress, "LButtonUp must be suppressed even if Ctrl released during drag");
+        assert!(suppress, "LButtonUp must be suppressed even if Alt released during drag");
     }
 
     #[test]
-    fn ctrl_released_mouse_move_during_drag_passes_through() {
-        // Ctrl released mid-drag, mouse move still tracks position but passes through
+    fn alt_released_mouse_move_during_drag_passes_through() {
+        // Alt released mid-drag, mouse move still tracks position but passes through
         let should_suppress = false;
         let drag_in_progress = true;
         let ctrl = false;
