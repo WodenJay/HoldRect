@@ -48,6 +48,7 @@ impl ApplicationHandler for App {
 
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
+            .with_transparent(true) // sets WS_EX_LAYERED at creation — required for SetLayeredWindowAttributes
             .with_decorations(false)
             .with_visible(false) // start hidden
             .with_skip_taskbar(true)
