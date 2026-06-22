@@ -46,8 +46,8 @@ fn main() {
 
 #[cfg(windows)]
 fn set_dpi_awareness() {
-    use windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware;
+    use windows::Win32::UI::HiDpi::*;
     unsafe {
-        let _ = SetProcessDPIAware();
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
     }
 }
