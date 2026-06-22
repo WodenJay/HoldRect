@@ -21,7 +21,10 @@ const BORDER_WIDTH: i32 = 4;
 const TRANSPARENT: u32 = 0x00000000;
 
 pub struct App {
+    // Declaration order matters for drop order: surface is dropped first,
+    // then context, then window — matching the borrow graph.
     surface: Option<Surface<&'static Window, &'static Window>>,
+    context: Option<Context<&'static Window>>,
     window: Option<Window>,
     state: AppState,
     input_rx: Receiver<InputEvent>,
@@ -31,19 +34,12 @@ impl App {
     pub fn new(input_rx: Receiver<InputEvent>) -> Self {
         Self {
             surface: None,
+            context: None,
             window: None,
             state: AppState::default(),
             input_rx,
         }
     }
-}
-
-/// Helper to create surface with proper lifetime handling.
-/// SAFETY: The returned Surface borrows `window`, but since both window and surface
-/// are stored in the same struct and surface is always dropped before window, this is sound.
-fn create_surface(window: &Window) -> Surface<&Window, &Window> {
-    let context = Context::new(window).expect("Failed to create softbuffer context");
-    Surface::new(&context, window).expect("Failed to create softbuffer surface")
 }
 
 impl ApplicationHandler for App {
@@ -62,12 +58,17 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         set_click_through(&window);
 
-        let surface = create_surface(&window);
+        // Create context and surface inline so nothing is dropped prematurely.
+        // SAFETY: We transmute the borrow lifetimes to 'static. This is sound because
+        // all three (surface, context, window) are stored in the same struct, and the
+        // struct's drop order (surface first, then context, then window) matches the
+        // borrow graph: surface borrows context, surface borrows window.
+        let context = Context::new(&window).expect("Failed to create softbuffer context");
+        let surface =
+            Surface::new(&context, &window).expect("Failed to create softbuffer surface");
 
-        // Store surface first (borrows window), then move window.
-        // We transmute the lifetimes to 'static since both are stored together
-        // and the surface is always dropped before the window.
         self.surface = Some(unsafe { std::mem::transmute(surface) });
+        self.context = Some(unsafe { std::mem::transmute(context) });
         self.window = Some(window);
     }
 
