@@ -67,7 +67,7 @@ Keyboard proc:
 
 Mouse proc (priority order — drag_in_progress checks come first, SHOULD_SUPPRESS only gates new drag initiation):
 - If `DRAG_IN_PROGRESS == true` AND `WM_LBUTTONUP` → send `InputEvent::MouseButtonUp`, set `DRAG_IN_PROGRESS = false`, return 1 (suppress — ensures LeftUp is always suppressed once drag started, even if Ctrl released first)
-- If `DRAG_IN_PROGRESS == true` AND `WM_MOUSEMOVE` → send `InputEvent::MouseMove { x, y }`, return 1 (suppress — continue tracking active drag regardless of Ctrl state)
+- If `DRAG_IN_PROGRESS == true` AND `WM_MOUSEMOVE` → send `InputEvent::MouseMove { x, y }`, return 0 (pass through — cursor must stay responsive; overlay tracks position via channel regardless)
 - If `SHOULD_SUPPRESS == false` → `CallNextHookEx` (pass through — no drag in progress, Ctrl not held)
 - `WM_LBUTTONDOWN` + Ctrl held (`GetAsyncKeyState(VK_CONTROL)`) → send `InputEvent::MouseButtonDown { x, y }`, set `DRAG_IN_PROGRESS = true`, return 1 (suppress — start new drag)
 - All other mouse events → `CallNextHookEx` (pass through)
@@ -76,7 +76,7 @@ Mouse proc (priority order — drag_in_progress checks come first, SHOULD_SUPPRE
 
 **Coordinates**: `MSLLHOOKSTRUCT.pt` provides screen coordinates as `LONG` (i32), same coordinate space as the current rdev→i32 cast. No DPI handling change needed — both use raw screen pixels.
 
-**Suppression rule**: Suppress only the Ctrl+LeftDrag combo. Keyboard events always pass through. Right-click, middle-click, scroll always pass through.
+**Suppression rule**: Suppress only button events in the Ctrl+LeftDrag combo (LButtonDown to start, LButtonUp to end). Mouse moves pass through so the cursor stays responsive — the overlay tracks position via the channel. Keyboard events always pass through. Right-click, middle-click, scroll always pass through.
 
 **Memory ordering**: `Ordering::Relaxed` is used for `SHOULD_SUPPRESS` and `DRAG_IN_PROGRESS`. Safe on x86 (strong memory model guarantees visibility). If porting to ARM in v0.3, upgrade to `Ordering::Acquire`/`Release`.
 
