@@ -109,8 +109,9 @@ impl ApplicationHandler for App {
         match &self.state.drawing {
             DrawingState::Drawing { .. } => {
                 if let Some(window) = &self.window {
+                    window.set_visible(true);
                     // SetWindowPos(HWND_TOPMOST) pins above all windows;
-                    // handles both visibility and Z-order in one call.
+                    // must come AFTER set_visible so WS_VISIBLE is set.
                     #[cfg(windows)]
                     show_window(window);
                     window.request_redraw();
