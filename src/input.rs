@@ -6,6 +6,13 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::state::InputEvent;
 
+#[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+#[cfg(windows)]
+use windows::Win32::Foundation::POINT;
+
 /// Last known mouse position, updated from MouseMove events.
 /// Needed because rdev 0.5 ButtonPress/ButtonRelease carry no coordinates.
 static LAST_POS: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
@@ -50,4 +57,32 @@ pub fn start_input_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>) {
 
 fn is_modifier(key: Key) -> bool {
     matches!(key, Key::ControlLeft | Key::ControlRight)
+}
+
+/// Poll mouse button state via GetAsyncKeyState.
+/// Supplements rdev which misses button events when modifier keys are held.
+#[cfg(windows)]
+pub fn start_button_poller(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>) {
+    std::thread::spawn(move || {
+        let mut was_pressed = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            let pressed = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } & 0x8000u16 as i16 != 0;
+            if pressed != was_pressed {
+                was_pressed = pressed;
+                let mut pt = POINT { x: 0, y: 0 };
+                unsafe { let _ = GetCursorPos(&mut pt); }
+                let event = if pressed {
+                    if let Ok(mut pos) = LAST_POS.lock() {
+                        *pos = (pt.x as f64, pt.y as f64);
+                    }
+                    InputEvent::MouseButtonDown { x: pt.x, y: pt.y }
+                } else {
+                    InputEvent::MouseButtonUp { x: pt.x, y: pt.y }
+                };
+                let _ = tx.send(event);
+                let _ = proxy.send_event(());
+            }
+        }
+    });
 }

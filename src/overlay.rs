@@ -1,7 +1,18 @@
 // Transparent overlay window + softbuffer rendering
 
+use std::io::Write;
 use std::num::NonZeroU32;
 use std::sync::mpsc::Receiver;
+
+/// Diagnostic log — writes to %TEMP%\holdrect.log
+fn diag(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true).append(true)
+        .open(std::env::temp_dir().join("holdrect.log"))
+    {
+        let _ = writeln!(f, "[{}] {}", std::process::id(), msg);
+    }
+}
 
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
@@ -50,13 +61,20 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
+        let monitor = event_loop.primary_monitor().unwrap();
+        let size = monitor.size();
+        let position = monitor.position();
+
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
             .with_transparent(true)
             .with_decorations(false)
             .with_visible(false) // start hidden
-            .with_skip_taskbar(true);
+            .with_skip_taskbar(true)
+            .with_position(winit::dpi::PhysicalPosition::new(position.x, position.y))
+            .with_inner_size(winit::dpi::PhysicalSize::new(size.width, size.height));
         let window = event_loop.create_window(attrs).expect("Failed to create window");
+        diag(&format!("window created, inner_size: {:?}", window.inner_size()));
 
         // Set WS_EX_TRANSPARENT for mouse passthrough
         #[cfg(windows)]
@@ -95,14 +113,19 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Drain all pending input events
         while let Ok(event) = self.input_rx.try_recv() {
+            let old_state = format!("{:?}", self.state.drawing);
             let new_state = process_event(&self.state, &event);
             self.state = new_state;
+            diag(&format!("event {:?} => {} -> {:?}", event, old_state, self.state.drawing));
         }
 
         // Control visibility and rendering based on state
         match &self.state.drawing {
-            DrawingState::Drawing { .. } => {
+            DrawingState::Drawing { start, current } => {
+                diag(&format!("Drawing state: start={:?} current={:?}", start, current));
                 if let Some(window) = &self.window {
+                    let sz = window.inner_size();
+                    diag(&format!("window inner_size: {}x{}", sz.width, sz.height));
                     window.set_visible(true);
                     #[cfg(windows)]
                     show_window(window);
@@ -127,14 +150,17 @@ impl ApplicationHandler for App {
 impl App {
     fn render(&mut self) {
         let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else {
+            diag("render: no window or surface");
             return;
         };
         let DrawingState::Drawing { start, current } = &self.state.drawing else {
+            diag("render: not in Drawing state");
             return;
         };
 
         let size = window.inner_size();
         let (w, h) = (size.width, size.height);
+        diag(&format!("render: drawing rect {:?}->{:?} on {}x{}", start, current, w, h));
         surface
             .resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap())
             .unwrap();

@@ -9,6 +9,8 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::input::start_input_listener;
+#[cfg(windows)]
+use crate::input::start_button_poller;
 use crate::overlay::{create_event_loop, run_overlay};
 use crate::state::InputEvent;
 use crate::tray::{start_tray, AppExit};
@@ -27,11 +29,19 @@ fn main() {
     // Channel: tray exit -> main
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
 
+    // Clone sender for button poller (supplements rdev when modifier held)
+    let poller_tx = input_tx.clone();
+    let poller_proxy = proxy.clone();
+
     // Start rdev input listener in background thread
     // proxy wakes the event loop after each input event
     thread::spawn(move || {
         start_input_listener(input_tx, proxy);
     });
+
+    // Start button poller (reliable button detection when modifier held)
+    #[cfg(windows)]
+    start_button_poller(poller_tx, poller_proxy);
 
     // Start system tray (keeps TrayIcon alive)
     let _tray_icon = start_tray(exit_tx);
