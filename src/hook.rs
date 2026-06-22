@@ -84,7 +84,9 @@ unsafe extern "system" fn mouse_hook_proc(
 
         let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, ctrl);
 
-        // Update DRAG_IN_PROGRESS based on decision
+        // Update DRAG_IN_PROGRESS based on decision.
+        // Gated on `should_suppress` because decide_mouse returns true exactly
+        // on state transitions (LButtonDown starts drag, LButtonUp ends it).
         if should_suppress {
             match msg {
                 WM_LBUTTONDOWN => { DRAG_IN_PROGRESS.store(true, Ordering::Relaxed); }
