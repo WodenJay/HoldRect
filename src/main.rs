@@ -4,6 +4,8 @@ mod state;
 mod input;
 mod overlay;
 mod tray;
+#[cfg(windows)]
+mod hook;
 
 use std::sync::mpsc;
 use std::thread;
