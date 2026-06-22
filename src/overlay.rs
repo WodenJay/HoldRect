@@ -109,7 +109,8 @@ impl ApplicationHandler for App {
         match &self.state.drawing {
             DrawingState::Drawing { .. } => {
                 if let Some(window) = &self.window {
-                    window.set_visible(true);
+                    // SetWindowPos(HWND_TOPMOST) pins above all windows;
+                    // handles both visibility and Z-order in one call.
                     #[cfg(windows)]
                     show_window(window);
                     window.request_redraw();
@@ -204,7 +205,8 @@ fn set_click_through(window: &Window) {
             ex_style
             | WS_EX_TRANSPARENT.0 as isize
             | WS_EX_LAYERED.0 as isize
-            | WS_EX_TOPMOST.0 as isize,
+            | WS_EX_TOPMOST.0 as isize
+            | WS_EX_NOACTIVATE.0 as isize,
         );
     }
 }
@@ -221,11 +223,19 @@ fn hide_from_alt_tab(window: &Window) {
 
 #[cfg(windows)]
 fn show_window(window: &Window) {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     let hwnd = get_hwnd(window);
     unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
+        // HWND_TOPMOST = (HWND)(LONG_PTR)-1 in Win32
+        let topmost = HWND(-1isize as *mut core::ffi::c_void);
+        let _ = SetWindowPos(
+            hwnd,
+            topmost,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
     }
 }
 
