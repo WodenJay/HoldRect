@@ -15,107 +15,145 @@ Replace `rdev` with Win32 `SetWindowsHookExW` using `WH_KEYBOARD_LL` + `WH_MOUSE
 
 - Replace `rdev` input listener (`src/input.rs: start_input_listener`)
 - Remove `start_button_poller` (mouse events now reliably captured via hook)
-- Remove `LAST_POS` static (mouse hook proc receives coordinates directly)
+- Remove `LAST_POS` static (mouse hook proc receives coordinates directly via `MSLLHOOKSTRUCT.pt`)
 - Remove `rdev` from `Cargo.toml`
-- New module `src/hook.rs` with hook thread and suppression logic
+- New module `src/hook.rs` (gated with `#[cfg(windows)]`) with hook thread and suppression logic
 - Wire hook into `main.rs` (replaces `start_input_listener` + `start_button_poller`)
-- Update `overlay.rs` to set shared suppression flag on state transitions
+- No changes to `overlay.rs` or `state.rs`
 
-Out of scope: multi-monitor, tray menu, config file, Linux/macOS.
+Out of scope: multi-monitor, tray menu, config file, Linux/macOS (Linux/macOS will use platform-specific hooks in v0.3).
 
 ## Architecture
 
 ```
 Main thread:    winit event loop + overlay rendering (unchanged)
 Hook thread:    message loop + SetWindowsHookExW callbacks
-                reads SHOULD_SUPPRESS, sends InputEvent via channel
+                sole authority on SHOULD_SUPPRESS, sends InputEvent via channel
+                wakes main event loop via proxy.send_event(()) after each tx.send()
 Tray thread:    tray-icon menu events (unchanged)
 ```
 
-### Module: `src/hook.rs`
+### Module: `src/hook.rs` (`#[cfg(windows)]`)
 
 **Public API:**
 ```rust
 pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>);
-pub static SHOULD_SUPPRESS: AtomicBool;
 ```
 
 `start_hook_listener` spawns a background thread that:
 1. Installs `WH_KEYBOARD_LL` hook via `SetWindowsHookExW`
 2. Installs `WH_MOUSE_LL` hook via `SetWindowsHookExW`
 3. Runs `GetMessageW` loop (required for low-level hooks to receive callbacks)
+4. After each `tx.send(event)`, calls `proxy.send_event(())` to wake the winit event loop (same pattern as current `start_input_listener`)
+
+**Internal state** (file-level statics, not pub):
+- `SHOULD_SUPPRESS: AtomicBool` — true when Ctrl is held (set by keyboard proc)
+- `DRAG_IN_PROGRESS: AtomicBool` — true when a LeftDown was suppressed (set by mouse proc)
+- `TX: OnceLock<Sender<InputEvent>>` — channel sender, set once in `start_hook_listener`
+- `PROXY: OnceLock<EventLoopProxy<()>>` — event loop proxy, set once in `start_hook_listener`
+
+**Sole authority on suppression**: `SHOULD_SUPPRESS` is written ONLY by the keyboard hook proc. The overlay does NOT write to it. This eliminates dual-authorship races.
 
 **Hook procs** (two `extern "system"` functions):
 
 Keyboard proc:
-- `WM_KEYDOWN`/`WM_SYSKEYDOWN` for Ctrl keys → send `InputEvent::ModifierChanged { pressed: true }`, set `SHOULD_SUPPRESS = true`, call `CallNextHookEx`
-- `WM_KEYUP`/`WM_SYSKEYUP` for Ctrl keys → send `InputEvent::ModifierChanged { pressed: false }`, set `SHOULD_SUPPRESS = false`, call `CallNextHookEx`
-- All other keys → `CallNextHookEx` (always pass through)
+- `WM_KEYDOWN`/`WM_SYSKEYDOWN` for Ctrl keys (VK_LCONTROL / VK_RCONTROL):
+  → send `InputEvent::ModifierChanged { pressed: true }`, set `SHOULD_SUPPRESS = true`
+  → always call `CallNextHookEx` (keyboard events always pass through)
+- `WM_KEYUP`/`WM_SYSKEYUP` for Ctrl keys:
+  → send `InputEvent::ModifierChanged { pressed: false }`, set `SHOULD_SUPPRESS = false`
+  → always call `CallNextHookEx`
+- All other keys → `CallNextHookEx` (pass through)
 
 Mouse proc:
+- If `DRAG_IN_PROGRESS == true` AND `WM_LBUTTONUP` → send `InputEvent::MouseButtonUp`, set `DRAG_IN_PROGRESS = false`, return 1 (suppress — ensures LeftUp is always suppressed once drag started)
 - If `SHOULD_SUPPRESS == false` → `CallNextHookEx` (pass through)
-- `WM_LBUTTONDOWN` + Ctrl held → send `InputEvent::MouseButtonDown { x, y }`, return 1 (suppress)
-- `WM_MOUSEMOVE` + left button held → send `InputEvent::MouseMove { x, y }`, return 1 (suppress)
-- `WM_LBUTTONUP` → send `InputEvent::MouseButtonUp { x, y }`, return 1 (suppress)
+- `WM_LBUTTONDOWN` + Ctrl held (`GetAsyncKeyState(VK_CONTROL)`) → send `InputEvent::MouseButtonDown { x, y }`, set `DRAG_IN_PROGRESS = true`, return 1 (suppress)
+- `WM_MOUSEMOVE` + `DRAG_IN_PROGRESS == true` → send `InputEvent::MouseMove { x, y }`, return 1 (suppress)
 - All other mouse events → `CallNextHookEx` (pass through)
 
-**Ctrl detection in mouse proc**: Check `GetAsyncKeyState(VK_CONTROL)` — simple, no state to maintain.
+**Race condition fix**: `DRAG_IN_PROGRESS` ensures `WM_LBUTTONUP` is always suppressed if the preceding `WM_LBUTTONDOWN` was suppressed — even if Ctrl is released before the mouse button (which sets `SHOULD_SUPPRESS = false`). This prevents the foreground app from receiving an orphaned `WM_LBUTTONUP`.
+
+**Coordinates**: `MSLLHOOKSTRUCT.pt` provides screen coordinates as `LONG` (i32), same coordinate space as the current rdev→i32 cast. No DPI handling change needed — both use raw screen pixels.
 
 **Suppression rule**: Suppress only the Ctrl+LeftDrag combo. Keyboard events always pass through. Right-click, middle-click, scroll always pass through.
 
-### Shared state: `SHOULD_SUPPRESS`
+**Memory ordering**: `Ordering::Relaxed` is used for `SHOULD_SUPPRESS` and `DRAG_IN_PROGRESS`. Safe on x86 (strong memory model guarantees visibility). If porting to ARM in v0.3, upgrade to `Ordering::Acquire`/`Release`.
 
-`AtomicBool` in `src/hook.rs`. Written by the overlay (main thread) on state transitions, read by the hook proc (hook thread).
+### Pure decision functions (for testability)
 
-Overlay sets it:
-- `Idle → Armed`: `SHOULD_SUPPRESS.store(true, Ordering::Relaxed)`
-- `Armed → Idle` or `Drawing → Idle`: `SHOULD_SUPPRESS.store(false, Ordering::Relaxed)`
+Extract the hook proc decision logic into pure functions:
 
-### Changes to `overlay.rs`
+```rust
+// Keyboard: returns Some(InputEvent) if key is Ctrl
+fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent>;
 
-- Import `SHOULD_SUPPRESS` from `crate::hook`
-- In `about_to_wait`, after processing events, check if state changed and update `SHOULD_SUPPRESS` accordingly
+// Mouse: returns (Option<InputEvent>, suppress: bool)
+fn decide_mouse(
+    msg: u32,              // WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_LBUTTONUP
+    pt: (i32, i32),        // screen coordinates
+    should_suppress: bool,  // current SHOULD_SUPPRESS value
+    drag_in_progress: bool, // current DRAG_IN_PROGRESS value
+    ctrl_held: bool,        // GetAsyncKeyState(VK_CONTROL)
+) -> (Option<InputEvent>, bool);
+```
+
+The actual `extern "system"` hook procs read the Win32 structs and call these functions, then act on the return values. This keeps all decision logic testable without Win32 types.
 
 ### Changes to `main.rs`
 
-- Remove `start_input_listener` spawn
+- Remove `start_input_listener` spawn (and its thread::spawn block)
 - Remove `start_button_poller` call
-- Add `start_hook_listener` call (same signature, replaces both)
 - Remove `poller_tx`/`poller_proxy` variables
+- Add `use crate::hook::start_hook_listener;` (behind `#[cfg(windows)]`)
+- Replace with `start_hook_listener(input_tx, proxy);` (behind `#[cfg(windows)]`)
 
 ### Changes to `Cargo.toml`
 
-- Remove `rdev = "0.5"` dependency
+- Remove `rdev = "0.5"`
 
 ### Changes to `state.rs`
 
 None. `InputEvent`, `DrawingState`, `AppState`, `process_event` unchanged.
 
+### Changes to `overlay.rs`
+
+None. The overlay does not write to `SHOULD_SUPPRESS`.
+
 ## Testing Strategy
 
 ### Unit tests (in `src/hook.rs`)
 
-Test the decision logic by calling hook proc functions directly with synthetic `KBDLLHOOKSTRUCT` / `MSLLHOOKSTRUCT` data:
+Test the pure decision functions directly. No Win32 types needed — just `u32` msg codes and `(i32, i32)` coordinates.
 
-1. **Keyboard hook — Ctrl press sends ModifierChanged and sets suppress flag**
-2. **Keyboard hook — Ctrl release sends ModifierChanged and clears suppress flag**
-3. **Keyboard hook — non-Ctrl key passes through (no event sent)**
-4. **Mouse hook — LeftDown with suppress=false passes through**
-5. **Mouse hook — LeftDown with suppress=true and Ctrl held → suppressed + event sent**
-6. **Mouse hook — MouseMove with suppress=true and left button held → suppressed + event sent**
-7. **Mouse hook — LeftUp with suppress=true → suppressed + event sent**
-8. **Mouse hook — non-left button with suppress=true passes through**
+**`decide_keyboard` tests:**
+1. Ctrl (VK_LCONTROL) key down → returns `Some(ModifierChanged { pressed: true })`
+2. Ctrl (VK_LCONTROL) key up → returns `Some(ModifierChanged { pressed: false })`
+3. Non-Ctrl key down → returns `None`
+4. Non-Ctrl key up → returns `None`
 
-To make hook procs testable: extract the decision logic into pure functions that take `(nCode, wParam, lParam, ctrl_held, suppress_flag)` and return `(Option<InputEvent>, bool_should_suppress_event)`.
+**`decide_mouse` tests:**
+
+| # | Test | should_suppress | drag_in_progress | ctrl_held | msg | Expected |
+|---|------|----------------|-----------------|-----------|-----|----------|
+| 5 | LeftDown, no suppress | false | false | false | WM_LBUTTONDOWN | (None, false) — pass through |
+| 6 | LeftDown, suppress, Ctrl held | true | false | true | WM_LBUTTONDOWN | (Some(MouseButtonDown), true) — suppress |
+| 7 | LeftDown, suppress, Ctrl NOT held | true | false | false | WM_LBUTTONDOWN | (None, false) — pass through |
+| 8 | MouseMove, drag in progress | false | true | false | WM_MOUSEMOVE | (Some(MouseMove), true) — suppress |
+| 9 | MouseMove, no drag | true | false | true | WM_MOUSEMOVE | (None, false) — pass through |
+| 10 | LeftUp, drag in progress | false | true | false | WM_LBUTTONUP | (Some(MouseButtonUp), true) — suppress, clear drag |
+| 11 | LeftUp, suppress but no drag | true | false | true | WM_LBUTTONUP | (None, false) — pass through |
+| 12 | RightDown, suppress | true | false | true | WM_RBUTTONDOWN | (None, false) — pass through |
 
 ### Integration test (manual)
 
-1. Run `cargo run` 
-2. Open Windows desktop → Ctrl+LeftDrag → only HoldRect red box visible, no system selection
-3. Open File Explorer → Ctrl+LeftDrag → only red box, no Explorer selection
-4. Open browser → Ctrl+LeftDrag → only red box, no browser text selection
-5. Ctrl+C / Ctrl+V in any app still works normally
-6. Normal mouse usage unaffected when Ctrl not held
+1. `cargo run`
+2. Windows desktop → Ctrl+LeftDrag → only HoldRect red box visible, no system selection
+3. File Explorer → Ctrl+LeftDrag → only red box, no Explorer selection
+4. Browser → Ctrl+LeftDrag → only red box, no browser text selection
+5. Ctrl+C / Ctrl+V / Ctrl+Z in any app still works
+6. Normal mouse usage (no Ctrl) completely unaffected
+7. Ctrl+LeftDrag, release Ctrl before releasing mouse → no orphaned LeftUp reaches foreground app
 
 ## Acceptance Criteria
 
