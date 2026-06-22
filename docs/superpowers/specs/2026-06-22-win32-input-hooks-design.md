@@ -65,11 +65,11 @@ Keyboard proc:
   → always call `CallNextHookEx`
 - All other keys → `CallNextHookEx` (pass through)
 
-Mouse proc:
-- If `DRAG_IN_PROGRESS == true` AND `WM_LBUTTONUP` → send `InputEvent::MouseButtonUp`, set `DRAG_IN_PROGRESS = false`, return 1 (suppress — ensures LeftUp is always suppressed once drag started)
-- If `SHOULD_SUPPRESS == false` → `CallNextHookEx` (pass through)
-- `WM_LBUTTONDOWN` + Ctrl held (`GetAsyncKeyState(VK_CONTROL)`) → send `InputEvent::MouseButtonDown { x, y }`, set `DRAG_IN_PROGRESS = true`, return 1 (suppress)
-- `WM_MOUSEMOVE` + `DRAG_IN_PROGRESS == true` → send `InputEvent::MouseMove { x, y }`, return 1 (suppress)
+Mouse proc (priority order — drag_in_progress checks come first, SHOULD_SUPPRESS only gates new drag initiation):
+- If `DRAG_IN_PROGRESS == true` AND `WM_LBUTTONUP` → send `InputEvent::MouseButtonUp`, set `DRAG_IN_PROGRESS = false`, return 1 (suppress — ensures LeftUp is always suppressed once drag started, even if Ctrl released first)
+- If `DRAG_IN_PROGRESS == true` AND `WM_MOUSEMOVE` → send `InputEvent::MouseMove { x, y }`, return 1 (suppress — continue tracking active drag regardless of Ctrl state)
+- If `SHOULD_SUPPRESS == false` → `CallNextHookEx` (pass through — no drag in progress, Ctrl not held)
+- `WM_LBUTTONDOWN` + Ctrl held (`GetAsyncKeyState(VK_CONTROL)`) → send `InputEvent::MouseButtonDown { x, y }`, set `DRAG_IN_PROGRESS = true`, return 1 (suppress — start new drag)
 - All other mouse events → `CallNextHookEx` (pass through)
 
 **Race condition fix**: `DRAG_IN_PROGRESS` ensures `WM_LBUTTONUP` is always suppressed if the preceding `WM_LBUTTONDOWN` was suppressed — even if Ctrl is released before the mouse button (which sets `SHOULD_SUPPRESS = false`). This prevents the foreground app from receiving an orphaned `WM_LBUTTONUP`.

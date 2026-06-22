@@ -27,8 +27,8 @@
 
 **Interfaces:**
 - Produces:
-  - `pub fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent>`
-  - `pub fn decide_mouse(msg: u32, pt: (i32, i32), should_suppress: bool, drag_in_progress: bool, ctrl_held: bool) -> (Option<InputEvent>, bool)`
+  - `fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent>`
+  - `fn decide_mouse(msg: u32, pt: (i32, i32), should_suppress: bool, drag_in_progress: bool, ctrl_held: bool) -> (Option<InputEvent>, bool)`
 
 - [ ] **Step 1: Write failing tests for `decide_keyboard`**
 
@@ -40,7 +40,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Pure decision function — no Win32 side effects, fully unit-testable
-pub fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
+fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
     let is_ctrl = vk_code == VK_LCONTROL.0 as u32 || vk_code == VK_RCONTROL.0 as u32;
     if !is_ctrl {
         return None;
@@ -91,13 +91,14 @@ Expected: FAIL — `hook` module not in `mod` tree yet.
 
 - [ ] **Step 3: Add `mod hook;` to `src/main.rs`**
 
-Add `mod hook;` after existing module declarations (line 6):
+Add `#[cfg(windows)] mod hook;` after existing module declarations (line 6):
 
 ```rust
 mod state;
 mod input;
 mod overlay;
 mod tray;
+#[cfg(windows)]
 mod hook;
 ```
 
@@ -121,7 +122,7 @@ git commit -m "feat: add decide_keyboard pure function with tests"
 - Modify: `src/hook.rs`
 
 **Interfaces:**
-- Produces: `pub fn decide_mouse(msg: u32, pt: (i32, i32), should_suppress: bool, drag_in_progress: bool, ctrl_held: bool) -> (Option<InputEvent>, bool)`
+- Produces: `fn decide_mouse(msg: u32, pt: (i32, i32), should_suppress: bool, drag_in_progress: bool, ctrl_held: bool) -> (Option<InputEvent>, bool)`
 
 - [ ] **Step 1: Write failing tests for `decide_mouse`**
 
@@ -130,7 +131,7 @@ Add to `src/hook.rs` (below `decide_keyboard` and its tests):
 ```rust
 /// Pure decision function for mouse events.
 /// Returns (Option<InputEvent>, should_suppress_this_event).
-pub fn decide_mouse(
+fn decide_mouse(
     msg: u32,
     pt: (i32, i32),
     should_suppress: bool,
@@ -264,7 +265,7 @@ git commit -m "feat: add decide_mouse pure function with tests"
 
 - [ ] **Step 1: Add statics and `start_hook_listener` to `src/hook.rs`**
 
-Add at the top of `src/hook.rs` (after imports):
+Add at the top of `src/hook.rs`, merging with existing imports from Task 1 (don't duplicate `use crate::state::InputEvent` and the `windows::*` imports — add only the new ones):
 
 ```rust
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -354,6 +355,8 @@ unsafe extern "system" fn mouse_hook_proc(
         let ms = *(l_param.0 as *const MSLLHOOKSTRUCT);
         let msg = w_param.0 as u32;
         let pt = (ms.pt.x, ms.pt.y);
+        // VK_CONTROL (0x11) catches EITHER Ctrl key via GetAsyncKeyState,
+        // unlike VK_LCONTROL/VK_RCONTROL which are per-key. Intentional.
         let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) & 0x8000u16 as i16 != 0;
         let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
@@ -484,7 +487,7 @@ Expected: PASS (no warnings about unused imports or dead code)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
+git add src/main.rs Cargo.toml src/input.rs src/hook.rs
 git commit -m "feat: wire Win32 hooks, remove rdev dependency"
 ```
 
@@ -532,6 +535,6 @@ Then:
 - [ ] **Step 7: Commit if any fixes needed**
 
 ```bash
-git add -A
+git add src/hook.rs src/main.rs
 git commit -m "fix: integration test adjustments"
 ```
