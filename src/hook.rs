@@ -1,7 +1,113 @@
-use crate::state::InputEvent;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::OnceLock;
+
+use windows::Win32::Foundation::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use winit::event_loop::EventLoopProxy;
 
+use crate::state::InputEvent;
+
+static SHOULD_SUPPRESS: AtomicBool = AtomicBool::new(false);
+static DRAG_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
+static PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
+
+/// Start global input hook listener on a background thread.
+/// Replaces rdev — intercepts and suppresses Ctrl+mouse combo.
+pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>) {
+    TX.set(tx).expect("start_hook_listener called twice");
+    PROXY.set(proxy).expect("start_hook_listener called twice");
+
+    std::thread::spawn(move || unsafe {
+        let _keyboard = SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(keyboard_hook_proc),
+            HINSTANCE::default(),
+            0,
+        )
+        .expect("Failed to install keyboard hook");
+
+        let _mouse = SetWindowsHookExW(
+            WH_MOUSE_LL,
+            Some(mouse_hook_proc),
+            HINSTANCE::default(),
+            0,
+        )
+        .expect("Failed to install mouse hook");
+
+        // Message loop required for low-level hooks to receive callbacks
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, HWND::default(), 0, 0).into() {
+            // hooks are active as long as message loop runs
+        }
+    });
+}
+
+unsafe extern "system" fn keyboard_hook_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    if n_code >= 0 {
+        let kb = *(l_param.0 as *const KBDLLHOOKSTRUCT);
+        let is_key_down = w_param == WPARAM(WM_KEYDOWN as usize) || w_param == WPARAM(WM_SYSKEYDOWN as usize);
+
+        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down) {
+            SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
+            if let Some(tx) = TX.get() {
+                let _ = tx.send(event);
+            }
+            if let Some(proxy) = PROXY.get() {
+                let _ = proxy.send_event(());
+            }
+        }
+    }
+    CallNextHookEx(None, n_code, w_param, l_param)
+}
+
+unsafe extern "system" fn mouse_hook_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    if n_code >= 0 {
+        let ms = *(l_param.0 as *const MSLLHOOKSTRUCT);
+        let msg = w_param.0 as u32;
+        let pt = (ms.pt.x, ms.pt.y);
+        // VK_CONTROL (0x11) catches EITHER Ctrl key via GetAsyncKeyState,
+        // unlike VK_LCONTROL/VK_RCONTROL which are per-key. Intentional.
+        let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) & 0x8000u16 as i16 != 0;
+        let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
+        let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
+
+        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, ctrl);
+
+        // Update DRAG_IN_PROGRESS based on decision
+        if should_suppress {
+            match msg {
+                WM_LBUTTONDOWN => { DRAG_IN_PROGRESS.store(true, Ordering::Relaxed); }
+                WM_LBUTTONUP   => { DRAG_IN_PROGRESS.store(false, Ordering::Relaxed); }
+                _ => {}
+            }
+        }
+
+        if let Some(event) = event {
+            if let Some(tx) = TX.get() {
+                let _ = tx.send(event);
+            }
+            if let Some(proxy) = PROXY.get() {
+                let _ = proxy.send_event(());
+            }
+        }
+
+        if should_suppress {
+            return LRESULT(1); // suppress event
+        }
+    }
+    CallNextHookEx(None, n_code, w_param, l_param)
+}
 
 // Pure decision function — no Win32 side effects, fully unit-testable
 fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
