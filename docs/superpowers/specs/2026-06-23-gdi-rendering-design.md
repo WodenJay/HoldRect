@@ -7,7 +7,7 @@ Overlay window doesn't appear above GPU-accelerated apps (browsers, terminals) e
 - `SetWindowPos(HWND_TOPMOST)` is called
 - `set_visible(true)` is called
 
-Root cause: winit's `with_transparent(true)` creates a WS_EX_LAYERED window using alpha-based transparency (`LWA_ALPHA`). Such windows are composited below DirectComposition visual trees used by GPU-accelerated apps. File Explorer (GDI-based) works fine because it doesn't use DirectComposition.
+Root cause: winit's `with_transparent(true)` takes over the layered window rendering pipeline (uses `UpdateLayeredWindow` for per-pixel alpha). This conflicts with manual `SetLayeredWindowAttributes(LWA_COLORKEY)` and may cause the overlay to be composited below GPU-accelerated apps using DirectComposition. Removing `with_transparent(true)` lets us control `WS_EX_LAYERED` ourselves via `set_click_through()` + `SetLayeredWindowAttributes`.
 
 ## Solution
 
@@ -26,6 +26,10 @@ Replace softbuffer with direct Win32 GDI rendering + `SetLayeredWindowAttributes
    - `ReleaseDC` + `DeleteObject` → cleanup
 
 4. **No back buffer needed:** The window is fullscreen with minimal drawing (just a border rectangle). No flicker because the transparent background is a color key, not actual painting.
+
+5. **WM_ERASEBKGND handling:** Windows' default `WM_ERASEBKGND` fills the client area with the class brush (white). This is handled by calling `FillRect` with `COLOR_KEY` in `draw_border()` before drawing the border — overwrites the white background with the transparent color key. Additionally, remove `.with_transparent(true)` so winit doesn't set up its own transparency pipeline.
+
+6. **LWA_COLORKEY persistence:** `SetLayeredWindowAttributes` settings persist across `ShowWindow(SW_HIDE)`/`ShowWindow(SW_SHOW)` cycles because `WS_EX_LAYERED` remains set. No re-application needed per frame.
 
 ### Changes
 

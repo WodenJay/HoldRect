@@ -45,14 +45,7 @@ windows = { version = "0.58", features = [
 ] }
 ```
 
-- [ ] **Step 2: Verify it compiles (will fail — overlay.rs still uses softbuffer)**
-
-Run: `cargo check 2>&1 | head -5`
-Expected: errors about `softbuffer` not found in `overlay.rs`
-
-This is expected. We fix it in Task 2.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock
@@ -73,7 +66,7 @@ This is the main task. It must be done atomically because removing softbuffer br
 - Consumes: `get_hwnd()`, `set_click_through()`, `show_window()`, `hide_from_alt_tab()` (unchanged)
 - Produces: `set_layered_color_key()` function; GDI-based `render()` method
 
-- [ ] **Step 1: Add normalize_rect edge-case tests (TDD RED)**
+- [ ] **Step 1: Add normalize_rect edge-case tests**
 
 Add these tests to `overlay.rs` at the bottom of the file, before the closing of the module. These test the existing `normalize_rect` function with edge cases we need to handle:
 
