@@ -38,6 +38,10 @@ fn main() {
 
     // Run overlay on main thread (winit requires main thread)
     run_overlay(input_rx);
+
+    // If overlay exits normally (window closed), terminate the process.
+    // The exit_rx thread only handles tray-initiated quit.
+    std::process::exit(0);
 }
 
 #[cfg(windows)]
