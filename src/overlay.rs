@@ -423,15 +423,11 @@ fn dim_outside_spotlights(
     }
 
     let stride = width as usize * 4;
-    let total_pixels = width as usize * height as usize;
 
     // Dim all pixels: BGRA = (0, 0, 0, 160)
-    for i in 0..total_pixels {
-        let off = i * 4;
-        buffer[off] = 0;     // B
-        buffer[off + 1] = 0; // G
-        buffer[off + 2] = 0; // R
-        buffer[off + 3] = 160; // A (semi-transparent)
+    let pattern: [u8; 4] = [0, 0, 0, 160];
+    for chunk in buffer.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&pattern);
     }
 
     // Clear interior of each spotlight rect to fully transparent

@@ -504,6 +504,19 @@ mod tests {
         assert!(next.pinned_rects.is_empty());
     }
 
+    #[test]
+    fn spotlight_active_without_pinned_does_not_push_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            spotlight_active: true,
+            pinned_active: false,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert!(next.pinned_rects.is_empty(), "spotlight without pinned must not push a rect");
+        assert!(!next.spotlight_active, "spotlight_active resets after mouse up");
+    }
+
     // --- Pinned mode: multiple rects accumulate ---
 
     #[test]
