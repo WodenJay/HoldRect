@@ -1,6 +1,6 @@
 # Popup System Design Spec
 
-> Status popup + Cheatsheet popup — Apple-style, spring animation, Direct2D rendering.
+> Status popup + Cheatsheet popup — Apple-style, spring animation, GDI rendering.
 
 ---
 
@@ -22,21 +22,23 @@ App (winit event loop)
 │   ├── anim_state: AnimationState
 │   └── timer: PopupTimer
 │
-└── popup_renderer: D2dRenderer  [NEW]
-    ├── d2d_factory: ID2D1Factory
-    ├── render_target: ID2D1HwndRenderTarget
-    ├── dwrite_factory: IDWriteFactory
-    └── text_formats: TextFormatCache
+└── popup_renderer: GdiRenderer  [NEW]
+    ├── mem_dc: HDC (memory DC for double-buffering)
+    ├── mem_bitmap: HBITMAP
+    ├── font_normal: HFONT (Segoe UI 14px)
+    ├── font_key: HFONT (Segoe UI 13px semibold)
+    ├── font_desc: HFONT (Segoe UI 13px regular)
+    └── bg_brush: HBRUSH
 ```
 
-### Direct2D Initialization (once, at popup window creation)
+### GDI Initialization (once, at popup window creation)
 
-> **Why Direct2D over GDI**: GDI's `DrawTextW` works for text but lacks native rounded rectangles, anti-aliased geometry, and shadow effects. Direct2D provides all three with clean APIs. Quality difference matters at popup scale — users read this text. Direct2D is part of Windows SDK, no external dependency. Binary size increase ~50-100KB.
+1. `CreateCompatibleDC` -> memory DC for off-screen rendering
+2. `CreateDIBSection` -> BGRA pixel buffer matching popup size
+3. `CreateFontW` x3 -> Segoe UI at specified sizes/weights
+4. Render pipeline: clear -> `RoundRect` background -> `DrawTextW` text -> `BitBlt` to window
 
-1. `D2D1CreateFactory` -> `ID2D1Factory`
-2. `ID2D1Factory::CreateHwndRenderTarget` -> `ID2D1HwndRenderTarget`
-3. `DWriteCreateFactory` -> `IDWriteFactory`
-4. `IDWriteFactory::CreateTextFormat` -> cache text format objects (status 14px medium, cheatsheet key 13px semibold, cheatsheet desc 13px regular)
+Shadow: layered semi-transparent `RoundRect` drawn offset behind the card (~2-3 layers at increasing alpha).
 
 ### Cross-Platform Strategy (v0.3)
 
@@ -44,12 +46,12 @@ App (winit event loop)
 src/popup/
     mod.rs          — PopupManager, AnimationState, PopupContent (shared)
     renderer.rs     — trait Renderer { draw_card(), draw_text() }
-    d2d_renderer.rs — Direct2D implementation (#[cfg(windows)], also used for popup)
+    gdi_renderer.rs — GDI implementation (#[cfg(windows)])
     // renderer_mac.rs — CoreGraphics (v0.3)
     // renderer_lin.rs — Cairo (v0.3)
 ```
 
-> **Cross-platform note**: Direct2D is Windows-only. v0.3 will replace with platform-specific renderers behind the `Renderer` trait. Popup logic (animation, state, layout) is platform-independent.
+> **Cross-platform note**: GDI is Windows-only. v0.3 will replace with platform-specific renderers behind the `Renderer` trait. Popup logic (animation, state, layout) is platform-independent. v0.3 renderer files will likely be simpler than GDI — CoreGraphics and Cairo both have native rounded rect + text APIs.
 
 ---
 
@@ -121,7 +123,7 @@ Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 
     height: 44px
     border-radius: 12px
     background: rgba(28, 28, 30, 0.88)     <- Apple dark card
-    shadow: D2D shadow, blur=12, offset=(0,2), rgba(0,0,0,0.35)
+    shadow: layered RoundRect (2-3 layers, offset +2px, rgba(0,0,0,0.1-0.3))
     horizontal: centered on current screen
 ```
 
@@ -142,7 +144,7 @@ Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 
     height: 20px padding + rows * 32px + 20px
     border-radius: 14px
     background: rgba(28, 28, 30, 0.92)      <- slightly more opaque than status
-    shadow: blur=20, offset=(0,4), rgba(0,0,0,0.45)
+    shadow: layered RoundRect (3-4 layers, offset +4px, rgba(0,0,0,0.1-0.4))
     position: centered on current screen (both H and V)
     key column: left-aligned, 24px left padding
     desc column: right-aligned, 24px right padding
@@ -151,9 +153,9 @@ Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 
 ### Typography
 
 - Font: Segoe UI (Windows system font, zero extra binary size)
-- Status text: 14px, DWRITE_FONT_WEIGHT_MEDIUM (500), `#FFFFFF`
-- Cheatsheet key: 13px, DWRITE_FONT_WEIGHT_SEMI_BOLD (600), `#E5E5E5`
-- Cheatsheet desc: 13px, DWRITE_FONT_WEIGHT_REGULAR (400), `#AEAEB2` (Apple secondary gray)
+- Status text: 14px, FW_MEDIUM (500), `#FFFFFF`
+- Cheatsheet key: 13px, FW_SEMIBOLD (600), `#E5E5E5`
+- Cheatsheet desc: 13px, FW_NORMAL (400), `#AEAEB2` (Apple secondary gray)
 
 ### Not Included (deliberate design decision)
 
@@ -342,7 +344,7 @@ Two windows, fully independent visibility.
 src/popup/
     mod.rs          — PopupManager, PopupContent, PopupPhase
     renderer.rs     — trait PopupRenderer
-    d2d_renderer.rs — Direct2D implementation (#[cfg(windows)])
+    gdi_renderer.rs — GDI implementation (#[cfg(windows)])
     animation.rs    — Spring animation math (pure functions, testable)
 ```
 
@@ -379,9 +381,9 @@ src/popup/
 
 ### Rendering — manual / integration
 
-- Direct2D initialization succeeds
+- GDI initialization (CreateCompatibleDC, CreateDIBSection, CreateFontW) succeeds
 - Popup window created with correct styles
 - Multi-monitor: popup appears on cursor's screen
 - Text renders legibly
-- Rounded corners visible
-- Shadow visible
+- Rounded corners visible (GDI RoundRect)
+- Shadow visible (layered RoundRect)
