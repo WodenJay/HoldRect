@@ -52,6 +52,8 @@ fn create_icon() -> Icon {
     const BLUE: [u8; 4] = [0x4A, 0x72, 0xA8, 0xFF];
     const PURPLE: [u8; 4] = [0x7B, 0x50, 0x90, 0xFF];
 
+    const BG: [u8; 4] = [0xF0, 0xED, 0xEB, 0xFF]; // off-white background
+
     let mut rgba = vec![0u8; SIZE * SIZE * 4];
     let center = (SIZE - 1) as f64 / 2.0;
 
@@ -69,20 +71,24 @@ fn create_icon() -> Icon {
                 dx.max(dy).max(0.0)
             };
 
-            // Only draw border pixels
-            if dist <= RADIUS && dist > RADIUS - BORDER_W {
-                // Pick color by perimeter position
-                let color = if fy <= center && fx <= center {
-                    RED
-                } else if fy <= center {
-                    ORANGE
-                } else if fx <= center {
-                    PURPLE
-                } else {
-                    BLUE
-                };
+            if dist <= RADIUS {
                 let off = (y * SIZE + x) * 4;
-                rgba[off..off + 4].copy_from_slice(&color);
+                if dist > RADIUS - BORDER_W {
+                    // Border: pick color by quadrant
+                    let color = if fy <= center && fx <= center {
+                        RED
+                    } else if fy <= center {
+                        ORANGE
+                    } else if fx <= center {
+                        PURPLE
+                    } else {
+                        BLUE
+                    };
+                    rgba[off..off + 4].copy_from_slice(&color);
+                } else {
+                    // Interior: off-white background
+                    rgba[off..off + 4].copy_from_slice(&BG);
+                }
             }
         }
     }
