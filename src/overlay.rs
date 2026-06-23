@@ -11,7 +11,13 @@ use winit::window::{Window, WindowId};
 #[cfg(windows)]
 use winit::platform::windows::WindowAttributesExtWindows;
 
+#[cfg(windows)]
+use windows::Win32::Foundation::HWND;
+
 use crate::config::ColorMode;
+use crate::popup::PopupManager;
+#[cfg(windows)]
+use crate::popup::gdi_renderer::GdiRenderer;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
@@ -123,10 +129,17 @@ pub struct App {
     color_mode: ColorMode,
     #[cfg(windows)]
     dib_cache: Option<DibCache>,
+    // Popup system
+    #[cfg(windows)]
+    popup_hwnd: Option<HWND>,
+    popup_manager: PopupManager,
+    #[cfg(windows)]
+    popup_renderer: Option<GdiRenderer>,
+    popup_monitor_rect: (i32, i32, i32, i32), // cached at show time
 }
 
 impl App {
-    pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode) -> Self {
+    pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode, modifier_name: String) -> Self {
         Self {
             window: None,
             state: AppState::default(),
@@ -135,6 +148,12 @@ impl App {
             color_mode,
             #[cfg(windows)]
             dib_cache: None,
+            #[cfg(windows)]
+            popup_hwnd: None,
+            popup_manager: PopupManager::new(&modifier_name),
+            #[cfg(windows)]
+            popup_renderer: None,
+            popup_monitor_rect: (0, 0, 1920, 1080),
         }
     }
 }
@@ -168,6 +187,42 @@ impl ApplicationHandler for App {
         set_click_through(&window);
 
         self.window = Some(window);
+
+        // Create popup window (raw HWND, not winit)
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HINSTANCE;
+            use windows::Win32::UI::WindowsAndMessaging::*;
+            let class_name: Vec<u16> = "HoldRectPopup\0".encode_utf16().collect();
+            let window_name: Vec<u16> = "HoldRectPopup\0".encode_utf16().collect();
+
+            // Register window class (re-registration is a no-op)
+            unsafe extern "system" fn popup_wnd_proc(hwnd: HWND, msg: u32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(popup_wnd_proc),
+                hInstance: HINSTANCE::default(),
+                lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
+                ..Default::default()
+            };
+            unsafe { RegisterClassExW(&wc); }
+
+            let popup_hwnd = unsafe {
+                CreateWindowExW(
+                    WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    windows::core::PCWSTR(class_name.as_ptr()),
+                    windows::core::PCWSTR(window_name.as_ptr()),
+                    WS_POPUP,
+                    0, 0, 400, 300, // will be resized on render
+                    None, None, HINSTANCE::default(), None,
+                )
+            }.expect("Failed to create popup window");
+
+            self.popup_hwnd = Some(popup_hwnd);
+            self.popup_renderer = Some(GdiRenderer::new(popup_hwnd));
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -190,13 +245,31 @@ impl ApplicationHandler for App {
         // Drain all pending input events
         while let Ok(event) = self.input_rx.try_recv() {
             let new_state = process_event(&self.state, &event);
+            let was_hidden = !self.popup_manager.needs_frame();
             self.state = new_state;
+            // Route to popup manager
+            self.popup_manager.on_event(&event, &self.state);
+            // Cache monitor rect when popup transitions from Hidden -> visible
+            if was_hidden && self.popup_manager.needs_frame() {
+                #[cfg(windows)]
+                { self.popup_monitor_rect = get_cursor_monitor_work_area(); }
+            }
         }
 
         self.render();
 
+        // Popup animation tick + render
+        if self.popup_manager.needs_frame() {
+            self.popup_manager.tick();
+            #[cfg(windows)]
+            if let (Some(renderer), Some(_hwnd)) = (self.popup_renderer.as_mut(), self.popup_hwnd) {
+                renderer.render(&self.popup_manager, self.popup_monitor_rect);
+            }
+        }
+
         let needs_animation = matches!(&self.state.drawing, DrawingState::Drawing { .. })
-            || !self.state.pinned_rects.is_empty();
+            || !self.state.pinned_rects.is_empty()
+            || self.popup_manager.needs_frame(); // keep event loop alive for popup animation
 
         if needs_animation {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -536,9 +609,29 @@ pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
 }
 
 /// Run the overlay event loop on the main thread. Blocks until exit.
-pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode) {
-    let mut app = App::new(input_rx, border_width, color_mode);
+pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode, modifier_name: String) {
+    let mut app = App::new(input_rx, border_width, color_mode, modifier_name);
     event_loop.run_app(&mut app).expect("Event loop error");
+}
+
+/// Get the work area of the monitor containing the cursor.
+#[cfg(windows)]
+fn get_cursor_monitor_work_area() -> (i32, i32, i32, i32) {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    unsafe {
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = GetMonitorInfoW(hmon, &mut info);
+        let work = info.rcWork;
+        (work.left, work.top, work.right, work.bottom)
+    }
 }
 
 /// Fill border pixels in a BGRA buffer. Pure logic, no GDI side effects.

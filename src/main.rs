@@ -37,7 +37,7 @@ fn main() {
         std::process::exit(0);
     });
 
-    run_overlay(event_loop, input_rx, config.border_width, config.color_mode);
+    run_overlay(event_loop, input_rx, config.border_width, config.color_mode, config.modifier_name.clone());
     std::process::exit(0);
 }
 
