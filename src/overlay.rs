@@ -19,7 +19,6 @@ use crate::state::process_event;
 const BORDER_WIDTH: i32 = 4;
 // GDI uses COLORREF: 0x00BBGGRR
 const BORDER_COLOR_GDI: u32 = 0x000000FF; // Red in GDI format
-const COLOR_KEY: u32 = 0x00FF00FF; // Magenta — transparent color key
 
 pub struct App {
     window: Option<Window>,
@@ -51,7 +50,6 @@ impl ApplicationHandler for App {
 
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
-            .with_transparent(true) // sets WS_EX_LAYERED at creation — required for SetLayeredWindowAttributes
             .with_decorations(false)
             .with_visible(false) // start hidden
             .with_skip_taskbar(true)
@@ -65,10 +63,6 @@ impl ApplicationHandler for App {
         // Set WS_EX_TRANSPARENT for mouse passthrough + WS_EX_LAYERED
         #[cfg(windows)]
         set_click_through(&window);
-
-        // Set color-key transparency after click-through (needs WS_EX_LAYERED)
-        #[cfg(windows)]
-        set_layered_color_key(&window);
 
         self.window = Some(window);
     }
@@ -173,17 +167,6 @@ fn set_click_through(window: &Window) {
 }
 
 #[cfg(windows)]
-fn set_layered_color_key(window: &Window) {
-    use windows::Win32::Foundation::COLORREF;
-    use windows::Win32::UI::WindowsAndMessaging::*;
-
-    let hwnd = get_hwnd(window);
-    unsafe {
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(COLOR_KEY), 0, LWA_COLORKEY);
-    }
-}
-
-#[cfg(windows)]
 fn hide_from_alt_tab(window: &Window) {
     use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -208,11 +191,11 @@ fn show_window_topmost(window: &Window) {
     }
 }
 
-/// Draw border rectangle using GDI BitBlt (same approach as softbuffer).
-/// Uses CreateDIBSection for pixel access, fixes alpha after GDI drawing.
+/// Draw border rectangle using UpdateLayeredWindow with per-pixel alpha.
+/// Background is fully transparent (alpha=0), border pixels have alpha=0xFF.
 #[cfg(windows)]
 fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
-    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Foundation::{COLORREF, POINT, RECT, SIZE};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -224,7 +207,6 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
         let h = wr.bottom - wr.top;
         if w <= 0 || h <= 0 { return; }
 
-        // Create DIB section with direct pixel access (like softbuffer)
         let bi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -242,15 +224,12 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
             &mut bits as *mut *mut u8 as _, None, 0)
             .expect("CreateDIBSection failed");
 
-        let window_dc = GetDC(hwnd);
-        let mem_dc = CreateCompatibleDC(window_dc);
+        let hdc = GetDC(hwnd);
+        let mem_dc = CreateCompatibleDC(hdc);
         let old_bmp = SelectObject(mem_dc, hbmp);
 
-        // Fill with color key (transparent background)
-        let full = RECT { left: 0, top: 0, right: w, bottom: h };
-        let key_brush = CreateSolidBrush(COLORREF(COLOR_KEY));
-        let _ = FillRect(mem_dc, &full, key_brush);
-        let _ = DeleteObject(key_brush);
+        // Zero the DIB — all pixels fully transparent (BGRA 0,0,0,0)
+        std::ptr::write_bytes(bits, 0, (w as usize) * (h as usize) * 4);
 
         // Draw red border with GDI
         let (x0, y0, x1, y1) = normalize_rect(start, current);
@@ -279,11 +258,24 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
             }
         }
 
-        // BitBlt to window DC (same as softbuffer's present)
-        let _ = BitBlt(window_dc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
-
-        // ValidateRect — stop WM_PAINT from firing (same as softbuffer)
-        let _ = ValidateRect(hwnd, None);
+        // UpdateLayeredWindow: per-pixel alpha compositing (replaces BitBlt + LWA_COLORKEY)
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            None,
+            Some(&POINT { x: wr.left, y: wr.top }),
+            Some(&SIZE { cx: w, cy: h }),
+            mem_dc,
+            Some(&POINT { x: 0, y: 0 }),
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
+        );
 
         // Cleanup
         SelectObject(mem_dc, old_pen);
@@ -291,8 +283,8 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
         SelectObject(mem_dc, old_bmp);
         let _ = DeleteObject(pen);
         let _ = DeleteObject(hbmp);
+        let _ = ReleaseDC(hwnd, hdc);
         let _ = DeleteDC(mem_dc);
-        let _ = ReleaseDC(hwnd, window_dc);
     }
 }
 

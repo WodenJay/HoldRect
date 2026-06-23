@@ -40,10 +40,6 @@ fn main() {
 fn set_dpi_awareness() {
     use windows::Win32::UI::HiDpi::*;
     unsafe {
-        // ponytail: SYSTEM_AWARE works with LWA_COLORKEY transparency.
-        // PER_MONITOR_AWARE_V2 breaks SetLayeredWindowAttributes color-key
-        // matching — the DPI context change prevents magenta from being
-        // recognized as the key color. Revert if multi-monitor coords drift.
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
     }
 }
