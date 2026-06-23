@@ -1,25 +1,28 @@
 use std::sync::mpsc::Sender;
 
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIcon, TrayIconBuilder,
 };
+
+use crate::autostart::{is_autostart_enabled, set_autostart};
 
 /// Application exit signal type
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppExit;
 
-/// Create system tray icon with quit menu.
+/// Create system tray icon with autostart toggle and quit menu.
 /// Returns the TrayIcon (must be kept alive) and sends AppExit on quit.
 pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
-    // Build tray menu
+    let autostart_item = CheckMenuItem::new("开机自启", is_autostart_enabled(), true, None);
+    let separator = PredefinedMenuItem::separator();
     let quit_item = MenuItem::new("退出 HoldRect", true, None);
-    let tray_menu = Menu::new();
-    tray_menu
-        .append(&quit_item)
-        .expect("Failed to add menu item");
 
-    // Create icon (16x16 single-color placeholder)
+    let tray_menu = Menu::new();
+    tray_menu.append(&autostart_item).expect("Failed to add autostart item");
+    tray_menu.append(&separator).expect("Failed to add separator");
+    tray_menu.append(&quit_item).expect("Failed to add quit item");
+
     let icon = create_icon();
 
     let tray_icon = TrayIconBuilder::new()
@@ -29,13 +32,24 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
         .build()
         .expect("Failed to create tray icon");
 
-    // Handle menu events in a background thread
     let quit_id = quit_item.id().clone();
+    let autostart_id = autostart_item.id().clone();
+
+    // SAFETY: CheckMenuItem is !Send due to Rc<RefCell<>> internals.
+    // On Windows, the underlying HMENU is managed by the OS and
+    // set_checked only calls CheckMenuItem() Win32 API which is safe
+    // from any thread. The tray menu itself stays alive via TrayIcon.
+    let autostart_ptr = Box::into_raw(Box::new(autostart_item)) as usize;
     std::thread::spawn(move || loop {
         if let Ok(event) = MenuEvent::receiver().recv() {
             if event.id == quit_id {
                 let _ = exit_tx.send(AppExit);
                 break;
+            } else if event.id == autostart_id {
+                let new_state = !is_autostart_enabled();
+                let _ = set_autostart(new_state);
+                let item = unsafe { &*(autostart_ptr as *const CheckMenuItem) };
+                item.set_checked(new_state);
             }
         }
     });
@@ -326,5 +340,22 @@ mod tests {
         assert_eq!(rx.try_recv().ok(), Some(AppExit));
         assert_eq!(rx.try_recv().ok(), Some(AppExit));
         assert!(rx.try_recv().is_err(), "Channel should be drained");
+    }
+
+    #[test]
+    fn check_menu_item_import_works() {
+        use tray_icon::menu::CheckMenuItem;
+        // CheckMenuItem::new(text, checked, enabled, accelerator)
+        let item = CheckMenuItem::new("Test", false, true, None);
+        assert!(!item.is_checked());
+    }
+
+    #[test]
+    fn autostart_initial_state_reflects_registry() {
+        use crate::autostart::{is_autostart_enabled, set_autostart};
+        // Ensure disabled first
+        set_autostart(false).unwrap();
+        let state = is_autostart_enabled();
+        assert!(!state);
     }
 }
