@@ -130,9 +130,16 @@ pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &
         if modifier_held && vk_code == 0x32 {
             return Some(InputEvent::DigitPressed(2));
         }
+        if modifier_held && vk_code == 0xC0 {
+            return Some(InputEvent::ToggleHelp);
+        }
         if vk_code == 0x1B {
             return Some(InputEvent::EscapePressed);
         }
+    }
+    // Backtick release (any state) — hide cheatsheet
+    if !is_key_down && vk_code == 0xC0 {
+        return Some(InputEvent::HideHelp);
     }
     None
 }
@@ -619,5 +626,37 @@ mod tests {
     fn escape_key_up_returns_none() {
         let result = decide_keyboard(0x1B, false, &[0x12, 0xA4, 0xA5], true);
         assert_eq!(result, None);
+    }
+
+    // --- VK_OEM_3 (backtick 0xC0) detection ---
+
+    #[test]
+    fn modifier_held_backtick_down_emits_toggle_help() {
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+        let event = decide_keyboard(0xC0, true, alt_codes, true);
+        assert_eq!(event, Some(InputEvent::ToggleHelp));
+    }
+
+    #[test]
+    fn backtick_down_no_modifier_is_none() {
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+        let event = decide_keyboard(0xC0, true, alt_codes, false);
+        assert_eq!(event, None);
+    }
+
+    #[test]
+    fn backtick_up_emits_hide_help() {
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+        let event = decide_keyboard(0xC0, false, alt_codes, true);
+        assert_eq!(event, Some(InputEvent::HideHelp));
+    }
+
+    #[test]
+    fn modifier_up_while_backtick_held_emits_hide_help() {
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+        // Modifier key release (0x12 = VK_LMENU)
+        let event = decide_keyboard(0x12, false, alt_codes, true);
+        // This should be ModifierChanged, not HideHelp — modifier release is handled by ModifierChanged
+        assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 }

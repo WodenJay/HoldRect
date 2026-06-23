@@ -7,6 +7,8 @@ pub enum InputEvent {
     MouseMove { x: i32, y: i32 },
     DigitPressed(u8),
     EscapePressed,
+    ToggleHelp,   // modifier + ` pressed
+    HideHelp,     // modifier or ` released
 }
 
 /// Drawing states
