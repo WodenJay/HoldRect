@@ -74,11 +74,13 @@ pub(crate) fn decide_keyboard(
 1. If vk_code in modifier_codes → ModifierChanged (existing)
 2. If is_key_down AND modifier_held:
    a. vk_code == 0x31 (VK_1) → DigitPressed(1)
-   b. vk_code == VK_ESCAPE → EscapePressed
-3. Otherwise → None
+3. If is_key_down AND vk_code == VK_ESCAPE → EscapePressed (regardless of modifier_held)
+4. Otherwise → None
 ```
 
 Only digit `1` is handled now. When Spotlight (digit `2`) is added in a later iteration, extend step 2a.
+
+Esc is NOT gated on modifier_held — user can press Esc anytime to clear pinned rects (PRD does not require modifier for Esc).
 
 ### Call Site Change
 

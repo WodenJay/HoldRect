@@ -503,9 +503,10 @@ fn escape_modifier_held_emits_escape_pressed() {
 }
 
 #[test]
-fn escape_modifier_not_held_returns_none() {
+fn escape_modifier_not_held_also_emits_escape_pressed() {
+    // Esc works without modifier — user can clear pinned rects anytime
     let result = decide_keyboard(0x1B, true, &[0x12, 0xA4, 0xA5], false);
-    assert_eq!(result, None);
+    assert_eq!(result, Some(InputEvent::EscapePressed));
 }
 
 #[test]
@@ -530,8 +531,8 @@ pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &
     if modifier_codes.contains(&vk_code) {
         return Some(InputEvent::ModifierChanged { pressed: is_key_down });
     }
-    if is_key_down && modifier_held {
-        if vk_code == 0x31 {
+    if is_key_down {
+        if modifier_held && vk_code == 0x31 {
             return Some(InputEvent::DigitPressed(1));
         }
         if vk_code == 0x1B {
