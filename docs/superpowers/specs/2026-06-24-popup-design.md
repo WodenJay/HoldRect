@@ -10,10 +10,12 @@
 
 One persistent hidden popup window. Show/update when needed, hide when done. Avoids repeated window creation/destruction.
 
+**Popup window styles**: `WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW`. The `WS_EX_TRANSPARENT` flag ensures mouse events pass through — critical for status popup which appears during drag. `WS_EX_TOOLWINDOW` prevents it from appearing in Alt-Tab.
+
 ```
 App (winit event loop)
 ├── overlay_window  (fullscreen transparent, existing)
-├── popup_window    (small, visible only when active) [NEW]
+├── popup_window    (small, WS_EX_TRANSPARENT mouse-passthrough, visible only when active) [NEW]
 │
 ├── popup_manager: PopupManager  [NEW]
 │   ├── active_popup: Option<PopupContent>
@@ -29,6 +31,8 @@ App (winit event loop)
 
 ### Direct2D Initialization (once, at popup window creation)
 
+> **Why Direct2D over GDI**: GDI's `DrawTextW` works for text but lacks native rounded rectangles, anti-aliased geometry, and shadow effects. Direct2D provides all three with clean APIs. Quality difference matters at popup scale — users read this text. Direct2D is part of Windows SDK, no external dependency. Binary size increase ~50-100KB.
+
 1. `D2D1CreateFactory` -> `ID2D1Factory`
 2. `ID2D1Factory::CreateHwndRenderTarget` -> `ID2D1HwndRenderTarget`
 3. `DWriteCreateFactory` -> `IDWriteFactory`
@@ -40,10 +44,12 @@ App (winit event loop)
 src/popup/
     mod.rs          — PopupManager, AnimationState, PopupContent (shared)
     renderer.rs     — trait Renderer { draw_card(), draw_text() }
-    renderer_win.rs — Direct2D implementation (#[cfg(windows)])
+    d2d_renderer.rs — Direct2D implementation (#[cfg(windows)], also used for popup)
     // renderer_mac.rs — CoreGraphics (v0.3)
     // renderer_lin.rs — Cairo (v0.3)
 ```
+
+> **Cross-platform note**: Direct2D is Windows-only. v0.3 will replace with platform-specific renderers behind the `Renderer` trait. Popup logic (animation, state, layout) is platform-independent.
 
 ---
 
@@ -67,7 +73,7 @@ Y position
      0    150ms   300ms   500ms
 
   slide-in:  ~400ms (with overshoot bounce)
-  hold:      1000ms
+  hold:      1000ms    // ponytail: overrides PRD's 0.5s per user preference for longer reading time
   slide-out: ~300ms (no overshoot, crisp exit)
   total:     ~1.7s
 ```
@@ -107,7 +113,7 @@ Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 
             screen top
     +---------------------+  <- 48px from top
     |                     |
-    |  Pinned + Spotlight |  <- Segoe UI 14px, #FFFFFF, weight 500
+    |  Pinned · Spotlight |  <- Segoe UI 14px, #FFFFFF, weight 500
     |                     |
     +---------------------+
 
@@ -149,9 +155,11 @@ Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 
 - Cheatsheet key: 13px, DWRITE_FONT_WEIGHT_SEMI_BOLD (600), `#E5E5E5`
 - Cheatsheet desc: 13px, DWRITE_FONT_WEIGHT_REGULAR (400), `#AEAEB2` (Apple secondary gray)
 
-### Not Included (explicitly excluded)
+### Not Included (deliberate design decision)
 
-- No icons / emojis
+The PRD specifies icons (📌, 🔦) in status text. User explicitly chose to exclude them for a cleaner, more premium aesthetic. No emojis, no icon fonts — pure typography.
+
+- No icons / emojis (overrides PRD — user decision)
 - No section headers / dividers
 - No gradient backgrounds
 - No key badge / pill shapes
@@ -172,7 +180,7 @@ Pure typography, differentiated by weight and color hierarchy.
 
 | pinned_active | spotlight_active | Display |
 |---|---|---|
-| false | false | `Transient` |
+| false | false | `Transient` |  // ponytail: PRD says "show Transient or don't show"; we always show
 | true | false | `Pinned` |
 | false | true | `Spotlight` |
 | true | true | `Pinned · Spotlight` |
@@ -180,7 +188,7 @@ Pure typography, differentiated by weight and color hierarchy.
 **Real-time update rules**:
 - Continuous toggles within 0.3s -> text updates immediately, hold timer resets
 - Animation position does not jump (toggle during slide-in updates text in place)
-- From SlidingOut -> reverse to SlidingIn (re-enter)
+- From SlidingOut -> reverse to SlidingIn (re-enter). Spring restarts from current Y position (not from -60px), so no visual jump.
 
 **Lifecycle**:
 ```
@@ -227,6 +235,8 @@ InputEvent::HideHelp,     // modifier or ` released
 ```
 
 Detection in `decide_keyboard`: check VK_OEM_3 combined with modifier state.
+
+> **Layout limitation**: VK_OEM_3 (0xC0) is the backtick key on US layout. On other layouts (e.g. German, French), this physical key produces a different character. This is a known limitation; the shortcut uses the physical key position, not the character. Same approach as VS Code and other tools.
 
 ### Multi-Monitor
 
