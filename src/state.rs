@@ -36,6 +36,7 @@ pub struct AppState {
     pub drawing: DrawingState,
     pub pinned_rects: Vec<PinnedRect>,
     pub pinned_active: bool,
+    pub spotlight_active: bool,
 }
 
 impl Default for AppState {
@@ -44,6 +45,7 @@ impl Default for AppState {
             drawing: DrawingState::Idle,
             pinned_rects: Vec::new(),
             pinned_active: false,
+            spotlight_active: false,
         }
     }
 }
@@ -58,37 +60,45 @@ pub(crate) fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i3
 
 /// Pure state transition function. No side effects.
 pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
-    let (drawing, pinned_active, pinned_rects) = match (&state.drawing, event) {
+    let (drawing, pinned_active, spotlight_active, pinned_rects) = match (&state.drawing, event) {
         // --- DigitPressed(1) toggle (only in Armed or Drawing, i.e. modifier held) ---
         (DrawingState::Armed, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.pinned_rects.clone())
+            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
         }
         (DrawingState::Drawing { .. }, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.pinned_rects.clone())
+            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
         }
 
-        // --- EscapePressed: clear all pinned rects ---
+        // --- DigitPressed(2) spotlight toggle (only in Armed or Drawing) ---
+        (DrawingState::Armed, InputEvent::DigitPressed(2)) => {
+            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.pinned_rects.clone())
+        }
+        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(2)) => {
+            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.pinned_rects.clone())
+        }
+
+        // --- EscapePressed: clear all pinned rects and reset flags ---
         (_, InputEvent::EscapePressed) => {
             let drawing = match &state.drawing {
                 DrawingState::Drawing { .. } => DrawingState::Armed,
                 other => other.clone(),
             };
-            (drawing, false, Vec::new())
+            (drawing, false, false, Vec::new())
         }
 
         // --- Existing transitions (pinned_active/pinned_rects unchanged unless noted) ---
 
         // Idle -> Armed on modifier press
         (DrawingState::Idle, InputEvent::ModifierChanged { pressed: true }) => {
-            (DrawingState::Armed, state.pinned_active, state.pinned_rects.clone())
+            (DrawingState::Armed, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
         }
         // Armed -> Drawing on mouse down
         (DrawingState::Armed, InputEvent::MouseButtonDown { x, y }) => {
-            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.pinned_rects.clone())
+            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
         }
         // Drawing: update current position on mouse move
         (DrawingState::Drawing { start, .. }, InputEvent::MouseMove { x, y }) => {
-            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.pinned_rects.clone())
+            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
         }
         // Drawing -> Armed on mouse up
         (DrawingState::Drawing { start, .. }, InputEvent::MouseButtonUp { x, y }) => {
@@ -96,27 +106,27 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
             let mut rects = state.pinned_rects.clone();
             if state.pinned_active {
                 let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
-                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: false });
+                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
             }
-            (DrawingState::Armed, false, rects)
+            (DrawingState::Armed, false, false, rects)
         }
         // Armed -> Idle on modifier release
         (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => {
-            (DrawingState::Idle, false, state.pinned_rects.clone())
+            (DrawingState::Idle, false, false, state.pinned_rects.clone())
         }
         // Drawing -> Idle on modifier release
         (DrawingState::Drawing { start, current }, InputEvent::ModifierChanged { pressed: false }) => {
             let mut rects = state.pinned_rects.clone();
             if state.pinned_active {
                 let (x0, y0, x1, y1) = normalize_rect(*start, *current);
-                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: false });
+                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
             }
-            (DrawingState::Idle, false, rects)
+            (DrawingState::Idle, false, false, rects)
         }
         // All other combinations: no state change
-        _ => (state.drawing.clone(), state.pinned_active, state.pinned_rects.clone()),
+        _ => (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.pinned_rects.clone()),
     };
-    AppState { drawing, pinned_rects, pinned_active }
+    AppState { drawing, pinned_rects, pinned_active, spotlight_active }
 }
 
 #[cfg(test)]
@@ -591,5 +601,194 @@ mod tests {
         assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
         assert!(!next.pinned_active);
         assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Spotlight mode: DigitPressed(2) toggle ---
+
+    #[test]
+    fn armed_digit_2_toggles_spotlight_active() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(next.spotlight_active);
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    #[test]
+    fn armed_digit_2_toggle_off() {
+        let state = AppState { drawing: DrawingState::Armed, spotlight_active: true, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(!next.spotlight_active);
+    }
+
+    #[test]
+    fn drawing_digit_2_toggles_spotlight_active() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(next.spotlight_active);
+        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+    }
+
+    #[test]
+    fn idle_digit_2_is_noop() {
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(!next.spotlight_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Spotlight mode: mouse up with spotlight ---
+
+    #[test]
+    fn drawing_mouse_up_pinned_spotlight_pushes_rect_with_spotlight_true() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            spotlight_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert_eq!(next.pinned_rects.len(), 1);
+        assert!(next.pinned_rects[0].spotlight);
+        assert!(!next.spotlight_active, "spotlight_active resets after mouse up");
+    }
+
+    #[test]
+    fn drawing_mouse_up_pinned_no_spotlight_pushes_spotlight_false() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            spotlight_active: false,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert_eq!(next.pinned_rects.len(), 1);
+        assert!(!next.pinned_rects[0].spotlight);
+    }
+
+    #[test]
+    fn spotlight_active_resets_after_mouse_up() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            spotlight_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert!(!next.spotlight_active);
+    }
+
+    // --- Spotlight + Pinned independence ---
+
+    #[test]
+    fn pinned_and_spotlight_independent() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        let next = process_event(&next, &InputEvent::DigitPressed(2));
+        assert!(next.pinned_active);
+        assert!(next.spotlight_active);
+    }
+
+    #[test]
+    fn digit_1_does_not_affect_spotlight() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        assert!(!next.spotlight_active);
+    }
+
+    #[test]
+    fn digit_2_does_not_affect_pinned() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(!next.pinned_active);
+    }
+
+    // --- Spotlight: EscapePressed ---
+
+    #[test]
+    fn escape_resets_spotlight_active() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            spotlight_active: true,
+            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: true }],
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::EscapePressed);
+        assert!(!next.spotlight_active);
+        assert!(next.pinned_rects.is_empty());
+    }
+
+    // --- Spotlight: modifier release ---
+
+    #[test]
+    fn modifier_release_resets_spotlight_active() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            spotlight_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert!(!next.spotlight_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn drawing_modifier_release_with_pinned_spotlight_pushes_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            spotlight_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert_eq!(next.pinned_rects.len(), 1);
+        assert!(next.pinned_rects[0].spotlight);
+        assert!(!next.spotlight_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Spotlight: multiple rects accumulate ---
+
+    #[test]
+    fn multiple_spotlight_rects_accumulate() {
+        let mut state = AppState::default();
+        // First spotlight rect
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        state = process_event(&state, &InputEvent::DigitPressed(2));
+        state = process_event(&state, &InputEvent::DigitPressed(1)); // also pinned
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 10, y: 10 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 50 });
+        assert_eq!(state.pinned_rects.len(), 1);
+        assert!(state.pinned_rects[0].spotlight);
+
+        // Second spotlight rect (must re-toggle)
+        state = process_event(&state, &InputEvent::DigitPressed(2));
+        state = process_event(&state, &InputEvent::DigitPressed(1));
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
+        assert_eq!(state.pinned_rects.len(), 2);
+        assert!(state.pinned_rects[1].spotlight);
+    }
+
+    // --- Mixed spotlight and non-spotlight ---
+
+    #[test]
+    fn mixed_spotlight_and_non_spotlight_rects() {
+        let mut state = AppState::default();
+        // Non-spotlight pinned rect
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        state = process_event(&state, &InputEvent::DigitPressed(1));
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 10, y: 10 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 50 });
+        assert!(!state.pinned_rects[0].spotlight);
+
+        // Spotlight pinned rect
+        state = process_event(&state, &InputEvent::DigitPressed(1));
+        state = process_event(&state, &InputEvent::DigitPressed(2));
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
+        assert!(!state.pinned_rects[0].spotlight, "first rect unchanged");
+        assert!(state.pinned_rects[1].spotlight, "second rect is spotlight");
     }
 }
