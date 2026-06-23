@@ -459,10 +459,11 @@ mod tests {
     }
 
     #[test]
-    fn digit_other_than_1_is_ignored() {
+    fn digit_2_does_not_toggle_pinned_but_toggles_spotlight() {
         let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
-        assert!(!next.pinned_active);
+        assert!(!next.pinned_active, "digit 2 must not affect pinned_active");
+        assert!(next.spotlight_active, "digit 2 toggles spotlight_active on");
     }
 
     // --- Pinned mode: mouse up with pinned_active ---
