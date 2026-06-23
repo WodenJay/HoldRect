@@ -34,7 +34,7 @@ fn main() {
         std::process::exit(0);
     });
 
-    run_overlay(event_loop, input_rx);
+    run_overlay(event_loop, input_rx, config.border_width, config.color_mode);
     std::process::exit(0);
 }
 

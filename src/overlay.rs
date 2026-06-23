@@ -11,25 +11,30 @@ use winit::window::{Window, WindowId};
 #[cfg(windows)]
 use winit::platform::windows::WindowAttributesExtWindows;
 
+use crate::config::ColorMode;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
 use crate::state::process_event;
 
-const BORDER_WIDTH: i32 = 4;
+const FLOW_SPEED: f32 = 0.1;
 
 pub struct App {
     window: Option<Window>,
     state: AppState,
     input_rx: Receiver<InputEvent>,
+    border_width: i32,
+    color_mode: ColorMode,
 }
 
 impl App {
-    pub fn new(input_rx: Receiver<InputEvent>) -> Self {
+    pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode) -> Self {
         Self {
             window: None,
             state: AppState::default(),
             input_rx,
+            border_width,
+            color_mode,
         }
     }
 }
@@ -93,7 +98,7 @@ impl ApplicationHandler for App {
             DrawingState::Drawing { start, current } => {
                 if let Some(window) = &self.window {
                     #[cfg(windows)]
-                    draw_border(window, *start, *current);
+                    draw_border(window, *start, *current, self.border_width, &self.color_mode);
                     #[cfg(windows)]
                     show_window_topmost(window);
                 }
@@ -120,7 +125,7 @@ impl App {
 
         #[cfg(windows)]
         {
-            draw_border(window, *start, *current);
+            draw_border(window, *start, *current, self.border_width, &self.color_mode);
             show_window_topmost(window);
         }
     }
@@ -191,10 +196,61 @@ fn show_window_topmost(window: &Window) {
     }
 }
 
+/// Convert HSV to RGB. h: 0-360, s: 0-1, v: 0-1.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r1, g1, b1) = match h as u32 / 60 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (
+        ((r1 + m) * 255.0).round() as u8,
+        ((g1 + m) * 255.0).round() as u8,
+        ((b1 + m) * 255.0).round() as u8,
+    )
+}
+
+/// Position along rectangle perimeter as fraction 0.0..1.0 (clockwise from top-left).
+fn perimeter_position(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
+    let w = (x1 - x0) as f32;
+    let h = (y1 - y0) as f32;
+    let perimeter = 2.0 * (w + h);
+    if perimeter == 0.0 { return 0.0; }
+    let dx = (x - x0) as f32;
+    let dy = (y - y0) as f32;
+    let dist = if dy == 0.0 && dx >= 0.0 {
+        dx
+    } else if dx == w && dy >= 0.0 {
+        w + dy
+    } else if dy == h && dx >= 0.0 {
+        w + h + (w - dx)
+    } else {
+        2.0 * w + h + (h - dy)
+    };
+    (dist / perimeter).clamp(0.0, 1.0)
+}
+
+fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &ColorMode, time_offset: f32) -> (u8, u8, u8) {
+    match color_mode {
+        ColorMode::Solid { r, g, b } => (*r, *g, *b),
+        ColorMode::Rainbow => {
+            let pos = perimeter_position(x, y, x0, y0, x1, y1);
+            let hue = ((pos + time_offset) % 1.0) * 360.0;
+            hsv_to_rgb(hue, 1.0, 1.0)
+        }
+    }
+}
+
 /// Draw border rectangle using UpdateLayeredWindow with per-pixel alpha.
-/// Background is fully transparent (alpha=0), border pixels are opaque red.
+/// Background is fully transparent (alpha=0), border pixels use configured color/rainbow.
 #[cfg(windows)]
-fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
+fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_width: i32, color_mode: &ColorMode) {
     use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -267,7 +323,13 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
 
         let stride = width as usize * 4;
 
-        let set_red_pixel = |x: i32, y: i32| {
+        let time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f32();
+        let time_offset = time_secs * FLOW_SPEED;
+
+        let set_pixel = |x: i32, y: i32, r: u8, g: u8, b: u8| {
             if x < 0 || x >= width || y < 0 || y >= height {
                 return;
             }
@@ -275,27 +337,31 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
             let pixel = pixels.add(y as usize * stride + x as usize * 4);
 
             // BGRA — alpha must be 255
-            *pixel.add(0) = 0;
-            *pixel.add(1) = 0;
-            *pixel.add(2) = 255;
+            *pixel.add(0) = b;
+            *pixel.add(1) = g;
+            *pixel.add(2) = r;
             *pixel.add(3) = 255;
         };
 
         if x1 > x0 && y1 > y0 {
-            for offset in 0..BORDER_WIDTH {
+            for offset in 0..border_width {
                 let top = y0 + offset;
                 let bottom = y1 - offset;
                 let left = x0 + offset;
                 let right = x1 - offset;
 
                 for x in left..=right {
-                    set_red_pixel(x, top);
-                    set_red_pixel(x, bottom);
+                    let (r, g, b) = color_at(x, top, x0, y0, x1, y1, color_mode, time_offset);
+                    set_pixel(x, top, r, g, b);
+                    let (r, g, b) = color_at(x, bottom, x0, y0, x1, y1, color_mode, time_offset);
+                    set_pixel(x, bottom, r, g, b);
                 }
 
                 for y in top..=bottom {
-                    set_red_pixel(left, y);
-                    set_red_pixel(right, y);
+                    let (r, g, b) = color_at(left, y, x0, y0, x1, y1, color_mode, time_offset);
+                    set_pixel(left, y, r, g, b);
+                    let (r, g, b) = color_at(right, y, x0, y0, x1, y1, color_mode, time_offset);
+                    set_pixel(right, y, r, g, b);
                 }
             }
         }
@@ -350,8 +416,8 @@ pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
 }
 
 /// Run the overlay event loop on the main thread. Blocks until exit.
-pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>) {
-    let mut app = App::new(input_rx);
+pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode) {
+    let mut app = App::new(input_rx, border_width, color_mode);
     event_loop.run_app(&mut app).expect("Event loop error");
 }
 
@@ -377,5 +443,85 @@ mod tests {
     #[test]
     fn normalize_rect_already_normalized() {
         assert_eq!(normalize_rect((0, 0), (1920, 1080)), (0, 0, 1920, 1080));
+    }
+
+    // -- hsv_to_rgb tests --
+
+    #[test]
+    fn hsv_red() {
+        assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), (255, 0, 0));
+    }
+
+    #[test]
+    fn hsv_green() {
+        assert_eq!(hsv_to_rgb(120.0, 1.0, 1.0), (0, 255, 0));
+    }
+
+    #[test]
+    fn hsv_blue() {
+        assert_eq!(hsv_to_rgb(240.0, 1.0, 1.0), (0, 0, 255));
+    }
+
+    #[test]
+    fn hsv_white() {
+        assert_eq!(hsv_to_rgb(0.0, 0.0, 1.0), (255, 255, 255));
+    }
+
+    #[test]
+    fn hsv_black() {
+        assert_eq!(hsv_to_rgb(0.0, 0.0, 0.0), (0, 0, 0));
+    }
+
+    #[test]
+    fn hsv_yellow() {
+        assert_eq!(hsv_to_rgb(60.0, 1.0, 1.0), (255, 255, 0));
+    }
+
+    #[test]
+    fn hsv_cyan() {
+        assert_eq!(hsv_to_rgb(180.0, 1.0, 1.0), (0, 255, 255));
+    }
+
+    #[test]
+    fn hsv_magenta() {
+        assert_eq!(hsv_to_rgb(300.0, 1.0, 1.0), (255, 0, 255));
+    }
+
+    // -- perimeter_position tests --
+
+    #[test]
+    fn perimeter_top_left_corner() {
+        let pos = perimeter_position(0, 0, 0, 0, 100, 100);
+        assert!((pos - 0.0).abs() < 0.001, "expected ~0.0, got {pos}");
+    }
+
+    #[test]
+    fn perimeter_top_right_corner() {
+        let pos = perimeter_position(100, 0, 0, 0, 100, 100);
+        assert!((pos - 0.25).abs() < 0.001, "expected ~0.25, got {pos}");
+    }
+
+    #[test]
+    fn perimeter_bottom_right_corner() {
+        let pos = perimeter_position(100, 100, 0, 0, 100, 100);
+        assert!((pos - 0.5).abs() < 0.001, "expected ~0.5, got {pos}");
+    }
+
+    #[test]
+    fn perimeter_bottom_left_corner() {
+        let pos = perimeter_position(0, 100, 0, 0, 100, 100);
+        assert!((pos - 0.75).abs() < 0.001, "expected ~0.75, got {pos}");
+    }
+
+    #[test]
+    fn perimeter_mid_top_edge() {
+        let pos = perimeter_position(50, 0, 0, 0, 100, 100);
+        assert!((pos - 0.125).abs() < 0.001, "expected ~0.125, got {pos}");
+    }
+
+    #[test]
+    fn perimeter_mid_right_edge() {
+        let pos = perimeter_position(100, 50, 0, 0, 100, 100);
+        assert!((pos - 0.375).abs() < 0.001, "expected ~0.375, got {pos}");
     }
 }
