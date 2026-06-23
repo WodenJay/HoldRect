@@ -127,6 +127,9 @@ pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &
         if modifier_held && vk_code == 0x31 {
             return Some(InputEvent::DigitPressed(1));
         }
+        if modifier_held && vk_code == 0x32 {
+            return Some(InputEvent::DigitPressed(2));
+        }
         if vk_code == 0x1B {
             return Some(InputEvent::EscapePressed);
         }
@@ -582,9 +585,20 @@ mod tests {
     }
 
     #[test]
-    fn digit_2_modifier_held_returns_none() {
-        // Only digit 1 handled for now; 2 is reserved for Spotlight
+    fn digit_2_modifier_held_emits_digit_pressed_2() {
         let result = decide_keyboard(0x32, true, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, Some(InputEvent::DigitPressed(2)));
+    }
+
+    #[test]
+    fn digit_2_modifier_not_held_returns_none() {
+        let result = decide_keyboard(0x32, true, &[0x12, 0xA4, 0xA5], false);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn digit_2_key_up_returns_none() {
+        let result = decide_keyboard(0x32, false, &[0x12, 0xA4, 0xA5], true);
         assert_eq!(result, None);
     }
 
