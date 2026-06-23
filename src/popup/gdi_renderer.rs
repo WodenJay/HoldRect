@@ -92,7 +92,7 @@ impl GdiRenderer {
         unsafe {
             // Deselect current bitmap before deleting
             SelectObject(self.mem_dc, self.original_stock_bitmap);
-            DeleteObject(self.mem_bitmap);
+            let _ = DeleteObject(self.mem_bitmap);
 
             let screen_dc = GetDC(HWND::default());
             let bi = BITMAPINFO {
@@ -258,11 +258,11 @@ impl Drop for GdiRenderer {
     fn drop(&mut self) {
         unsafe {
             SelectObject(self.mem_dc, self.original_stock_bitmap);
-            DeleteObject(self.mem_bitmap);
-            DeleteDC(self.mem_dc);
-            DeleteObject(self.font_normal);
-            DeleteObject(self.font_key);
-            DeleteObject(self.font_desc);
+            let _ = DeleteObject(self.mem_bitmap);
+            let _ = DeleteDC(self.mem_dc);
+            let _ = DeleteObject(self.font_normal);
+            let _ = DeleteObject(self.font_key);
+            let _ = DeleteObject(self.font_desc);
         }
     }
 }
