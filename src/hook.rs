@@ -58,7 +58,11 @@ unsafe extern "system" fn keyboard_hook_proc(
 
         let modifier_held = SHOULD_SUPPRESS.load(Ordering::Relaxed);
         if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, MODIFIER_CODES.get().expect("MODIFIER_CODES not set"), modifier_held) {
-            SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
+            // Only update suppression flag for modifier events — Esc/DigitPressed
+            // would incorrectly suppress mouse clicks if stored as true.
+            if matches!(event, InputEvent::ModifierChanged { .. }) {
+                SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
+            }
             if let Some(tx) = TX.get() {
                 let _ = tx.send(event);
             }
@@ -358,7 +362,7 @@ mod tests {
         assert!(!suppress, "MouseMove must pass through during drag even if Ctrl released");
     }
 
-    // --- Configurable modifier key tests (3-param decide_keyboard) ---
+    // --- Configurable modifier key tests (4-param decide_keyboard) ---
 
     #[test]
     fn alt_key_with_alt_config_detected() {

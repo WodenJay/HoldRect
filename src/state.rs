@@ -38,7 +38,7 @@ impl Default for AppState {
     }
 }
 
-fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i32, i32, i32) {
+pub(crate) fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i32, i32, i32) {
     let x0 = start.0.min(current.0);
     let y0 = start.1.min(current.1);
     let x1 = start.0.max(current.0);
@@ -536,7 +536,7 @@ mod tests {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
             pinned_rects: vec![(0, 0, 100, 100)],
-            pinned_active: true,
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
         assert_eq!(next.drawing, DrawingState::Armed);

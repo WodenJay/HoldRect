@@ -15,6 +15,7 @@ use crate::config::ColorMode;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
+use crate::state::normalize_rect;
 use crate::state::process_event;
 
 const FLOW_SPEED: f32 = 0.1;
@@ -260,14 +261,6 @@ impl App {
             commit_dib(window, cache, width, height, wr.left, wr.top);
         }
     }
-}
-
-fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i32, i32, i32) {
-    let x0 = start.0.min(current.0);
-    let y0 = start.1.min(current.1);
-    let x1 = start.0.max(current.0);
-    let y1 = start.1.max(current.1);
-    (x0, y0, x1, y1)
 }
 
 /// Get HWND from a winit Window using raw-window-handle 0.6
