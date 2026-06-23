@@ -256,14 +256,20 @@ pub enum InputEvent {
 
 ### decide_keyboard Changes (hook.rs)
 
-Add VK_OEM_3 detection alongside existing digit key handling:
+Add VK_OEM_3 detection alongside existing digit key handling. The current `decide_keyboard` only handles key-down for non-modifier keys. `HideHelp` must fire on key-up, so the function needs a key-up branch after the existing key-down block:
+
 ```rust
-// In decide_keyboard(), after digit key handling:
-if vk_code == 0xC0 && !is_up {
+// In decide_keyboard(), key-down block (existing):
+if modifier_held && vk_code == 0xC0 {
     return Some(InputEvent::ToggleHelp);
 }
-if (vk_code == 0xC0 || is_modifier) && is_up {
-    return Some(InputEvent::HideHelp);
+
+// New key-up block (after the key-down block):
+if !is_key_down {
+    if vk_code == 0xC0 {
+        return Some(InputEvent::HideHelp);
+    }
+    // Note: modifier release is already handled by ModifierChanged above
 }
 ```
 
@@ -356,6 +362,8 @@ fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
     ...
 }
 ```
+
+> **ControlFlow**: `needs_animation` in `about_to_wait` must include `popup_manager.needs_frame()` — otherwise the event loop falls into `ControlFlow::Wait` when no overlay drawing is active, freezing the popup animation. Monitor rect is cached at show time (not per-frame) per spec.
 
 ### Popup vs Overlay Independence
 
