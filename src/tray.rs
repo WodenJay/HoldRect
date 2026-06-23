@@ -43,7 +43,7 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
 }
 
 fn create_icon() -> Icon {
-    const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+    const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
     const SIZE: u32 = 32;
     const BG: [u8; 3] = [0xF0, 0xED, 0xEB]; // off-white background color
     const BG_THRESHOLD: u16 = 20; // color distance tolerance
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn create_icon_has_transparent_pixels() {
         // Verify the embedded PNG decodes and background becomes transparent
-        const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+        const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
         let img = image::load_from_memory(PNG_DATA).unwrap();
         let rgba = img.resize(32, 32, image::imageops::FilterType::Lanczos3).to_rgba8();
         let raw = rgba.into_raw();
@@ -127,7 +127,7 @@ mod tests {
     fn debug_icon_output() {
         use image::RgbaImage;
 
-        const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+        const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
         const SIZE: u32 = 32;
         const BG: [u8; 3] = [0xF0, 0xED, 0xEB];
         const BG_THRESHOLD: u16 = 20;
@@ -154,8 +154,8 @@ mod tests {
         // Save to disk for visual inspection
         let out_img = RgbaImage::from_raw(SIZE, SIZE, pixels.clone())
             .expect("Failed to build RgbaImage");
-        std::fs::create_dir_all("asserts").unwrap();
-        out_img.save("asserts/debug_icon.png").expect("Failed to save debug icon PNG");
+        std::fs::create_dir_all("assets").unwrap();
+        out_img.save("assets/debug_icon.png").expect("Failed to save debug icon PNG");
 
         // Print stats
         let total = (SIZE * SIZE) as usize;
