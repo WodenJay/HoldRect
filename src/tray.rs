@@ -14,7 +14,7 @@ pub struct AppExit;
 /// Create system tray icon with autostart toggle and quit menu.
 /// Returns the TrayIcon (must be kept alive) and sends AppExit on quit.
 pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
-    let autostart_item = CheckMenuItem::new("开机自启", is_autostart_enabled(), true, None);
+    let autostart_item = CheckMenuItem::new("开机自启", true, is_autostart_enabled(), None);
     let separator = PredefinedMenuItem::separator();
     let quit_item = MenuItem::new("退出 HoldRect", true, None);
 
