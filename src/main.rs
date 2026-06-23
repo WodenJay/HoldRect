@@ -40,6 +40,7 @@ fn main() {
 fn set_dpi_awareness() {
     use windows::Win32::UI::HiDpi::*;
     unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+        // Per-monitor V2: mouse physical coords match overlay coords across all monitors
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 }

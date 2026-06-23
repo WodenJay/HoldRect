@@ -42,9 +42,12 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
-        let monitor = event_loop.primary_monitor().unwrap();
-        let size = monitor.size();
-        let position = monitor.position();
+        // Cover entire virtual desktop (all monitors)
+        let monitors: Vec<_> = event_loop.available_monitors().collect();
+        let left   = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
+        let top    = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
+        let right  = monitors.iter().map(|m| m.position().x + m.size().width as i32).max().unwrap_or(1920);
+        let bottom = monitors.iter().map(|m| m.position().y + m.size().height as i32).max().unwrap_or(1080);
 
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
@@ -52,8 +55,11 @@ impl ApplicationHandler for App {
             .with_decorations(false)
             .with_visible(false) // start hidden
             .with_skip_taskbar(true)
-            .with_position(winit::dpi::PhysicalPosition::new(position.x, position.y))
-            .with_inner_size(winit::dpi::PhysicalSize::new(size.width, size.height));
+            .with_position(winit::dpi::PhysicalPosition::new(left, top))
+            .with_inner_size(winit::dpi::PhysicalSize::new(
+                (right - left) as u32,
+                (bottom - top) as u32,
+            ));
         let window = event_loop.create_window(attrs).expect("Failed to create window");
 
         // Set WS_EX_TRANSPARENT for mouse passthrough + WS_EX_LAYERED

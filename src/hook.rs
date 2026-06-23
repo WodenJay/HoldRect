@@ -114,7 +114,11 @@ unsafe extern "system" fn mouse_hook_proc(
 
 // Pure decision function — no Win32 side effects, fully unit-testable
 fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
-    let is_alt = vk_code == VK_LMENU.0 as u32 || vk_code == VK_RMENU.0 as u32;
+    // Windows reports VK_MENU (0x12) for generic Alt in many contexts
+    // (browsers, terminals). Must also catch VK_LMENU / VK_RMENU.
+    let is_alt = vk_code == VK_MENU.0 as u32
+        || vk_code == VK_LMENU.0 as u32
+        || vk_code == VK_RMENU.0 as u32;
     if !is_alt {
         return None;
     }
@@ -180,6 +184,18 @@ mod tests {
     fn right_alt_down_returns_modifier_pressed() {
         let result = decide_keyboard(VK_RMENU.0 as u32, true);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn generic_alt_down_returns_modifier_pressed() {
+        let result = decide_keyboard(VK_MENU.0 as u32, true);
+        assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn generic_alt_up_returns_modifier_released() {
+        let result = decide_keyboard(VK_MENU.0 as u32, false);
+        assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
