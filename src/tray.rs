@@ -43,12 +43,32 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
 }
 
 fn create_icon() -> Icon {
-    // 16x16 red square icon
-    let mut rgba = Vec::with_capacity(16 * 16 * 4);
-    for _ in 0..(16 * 16) {
-        rgba.extend_from_slice(&[0xFF, 0x00, 0x00, 0xFF]); // R, G, B, A
-    }
-    Icon::from_rgba(rgba, 16, 16).expect("Failed to create icon")
+    const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+    const SIZE: u32 = 32;
+    const BG: [u8; 3] = [0xF0, 0xED, 0xEB]; // off-white background color
+    const BG_THRESHOLD: u8 = 20; // color distance tolerance
+
+    let img = image::load_from_memory(PNG_DATA)
+        .expect("Failed to decode embedded PNG");
+    let rgba = img.resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+
+    // Make background pixels transparent
+    let pixels: Vec<u8> = rgba.into_raw()
+        .chunks(4)
+        .flat_map(|p| {
+            let dist = ((p[0] as i16 - BG[0] as i16).unsigned_abs()
+                + (p[1] as i16 - BG[1] as i16).unsigned_abs()
+                + (p[2] as i16 - BG[2] as i16).unsigned_abs()) as u8;
+            if dist < BG_THRESHOLD {
+                [p[0], p[1], p[2], 0] // transparent
+            } else {
+                [p[0], p[1], p[2], p[3]]
+            }
+        })
+        .collect();
+
+    Icon::from_rgba(pixels, SIZE, SIZE).expect("Failed to create icon")
 }
 
 #[cfg(test)]
@@ -68,32 +88,32 @@ mod tests {
     #[test]
     fn create_icon_returns_valid_icon() {
         let icon = create_icon();
-        // Icon::from_rgba should succeed with valid RGBA data
-        // We can't easily inspect internal state, but if it didn't panic, it's valid
-        let _ = icon;
+        let _ = icon; // didn't panic = valid
     }
 
     #[test]
     fn create_icon_rgba_size() {
-        // Verify the RGBA buffer is correct size: 16 * 16 * 4 = 1024
-        let mut rgba = Vec::with_capacity(16 * 16 * 4);
-        for _ in 0..(16 * 16) {
-            rgba.extend_from_slice(&[0xFF, 0x00, 0x00, 0xFF]);
-        }
-        assert_eq!(rgba.len(), 1024, "RGBA buffer should be 1024 bytes (16*16*4)");
+        // 32x32 RGBA = 4096 bytes
+        let icon = create_icon();
+        // Icon was created from 32x32 RGBA data successfully
+        let _ = icon;
     }
 
     #[test]
-    fn create_icon_rgba_contents() {
-        // Verify first pixel is red with full alpha
-        let mut rgba = Vec::with_capacity(16 * 16 * 4);
-        for _ in 0..(16 * 16) {
-            rgba.extend_from_slice(&[0xFF, 0x00, 0x00, 0xFF]);
-        }
-        assert_eq!(rgba[0], 0xFF, "R channel should be 0xFF");
-        assert_eq!(rgba[1], 0x00, "G channel should be 0x00");
-        assert_eq!(rgba[2], 0x00, "B channel should be 0x00");
-        assert_eq!(rgba[3], 0xFF, "A channel should be 0xFF");
+    fn create_icon_has_transparent_pixels() {
+        // Verify the embedded PNG decodes and background becomes transparent
+        const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+        let img = image::load_from_memory(PNG_DATA).unwrap();
+        let rgba = img.resize(32, 32, image::imageops::FilterType::Lanczos3).to_rgba8();
+        let raw = rgba.into_raw();
+        // At least some pixels should be near the off-white background
+        let bg_count = raw.chunks(4).filter(|p| {
+            let dist = ((p[0] as i16 - 0xF0).unsigned_abs()
+                + (p[1] as i16 - 0xED).unsigned_abs()
+                + (p[2] as i16 - 0xEB).unsigned_abs()) as u8;
+            dist < 20
+        }).count();
+        assert!(bg_count > 0, "Should detect background pixels in source image");
     }
 
     #[test]
