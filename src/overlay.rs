@@ -192,27 +192,17 @@ impl ApplicationHandler for App {
             self.state = new_state;
         }
 
-        // Control visibility and rendering based on state
-        match &self.state.drawing {
-            DrawingState::Drawing { start, current } => {
-                if let Some(window) = &self.window {
-                    #[cfg(windows)]
-                    draw_border(window, *start, *current, self.border_width, &self.color_mode, &mut self.dib_cache);
-                    #[cfg(windows)]
-                    show_window_topmost(window);
-                }
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    std::time::Instant::now() + std::time::Duration::from_millis(16),
-                ));
-            }
-            _ => {
-                if let Some(window) = &self.window {
-                    window.set_visible(false);
-                    #[cfg(windows)]
-                    hide_from_alt_tab(window);
-                }
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
+        self.render();
+
+        let needs_animation = matches!(&self.state.drawing, DrawingState::Drawing { .. })
+            || !self.state.pinned_rects.is_empty();
+
+        if needs_animation {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                std::time::Instant::now() + std::time::Duration::from_millis(16),
+            ));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }
@@ -220,12 +210,54 @@ impl ApplicationHandler for App {
 impl App {
     fn render(&mut self) {
         let Some(window) = &self.window else { return; };
-        let DrawingState::Drawing { start, current } = &self.state.drawing else { return; };
+
+        let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
+        let has_pinned = !self.state.pinned_rects.is_empty();
+
+        if !has_drawing && !has_pinned {
+            window.set_visible(false);
+            #[cfg(windows)]
+            hide_from_alt_tab(window);
+            return;
+        }
 
         #[cfg(windows)]
         {
-            draw_border(window, *start, *current, self.border_width, &self.color_mode, &mut self.dib_cache);
+            let hwnd = get_hwnd(window);
+            let mut wr = windows::Win32::Foundation::RECT::default();
+            if unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr) }.is_err() {
+                return;
+            }
+            let width = wr.right - wr.left;
+            let height = wr.bottom - wr.top;
+            if width <= 0 || height <= 0 { return; }
+
+            ensure_dib_size(&mut self.dib_cache, width, height);
+            let cache = match &mut self.dib_cache {
+                Some(c) if !c.pixels.is_null() => c,
+                _ => return,
+            };
+            clear_dib_pixels(cache, width, height);
+
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
+
+            // Draw all pinned rects
+            for &(x0, y0, x1, y1) in &self.state.pinned_rects {
+                draw_rect_in_dib(cache, width, height, wr.left, wr.top,
+                                 (x0, y0), (x1, y1), self.border_width, &self.color_mode, time_offset);
+            }
+
+            // Draw active rect on top
+            if let DrawingState::Drawing { start, current } = &self.state.drawing {
+                draw_rect_in_dib(cache, width, height, wr.left, wr.top,
+                                 *start, *current, self.border_width, &self.color_mode, time_offset);
+            }
+
             show_window_topmost(window);
+            commit_dib(window, cache, width, height, wr.left, wr.top);
         }
     }
 }
@@ -346,117 +378,77 @@ fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &Col
     }
 }
 
-/// Draw border rectangle using UpdateLayeredWindow with per-pixel alpha.
-/// Background is fully transparent (alpha=0), border pixels use configured color/rainbow.
-/// Uses cached DIB section to avoid per-frame allocation.
+/// Ensure DIB is allocated to the correct size.
 #[cfg(windows)]
-fn draw_border(
-    window: &Window,
+fn ensure_dib_size(dib_cache: &mut Option<DibCache>, width: i32, height: i32) {
+    match dib_cache {
+        Some(cache) => cache.ensure_size(width, height),
+        None => {
+            *dib_cache = DibCache::new(width, height);
+        }
+    }
+}
+
+/// Clear the DIB to fully transparent pixels.
+#[cfg(windows)]
+fn clear_dib_pixels(cache: &mut DibCache, width: i32, height: i32) {
+    unsafe {
+        std::ptr::write_bytes(cache.pixels, 0, width as usize * height as usize * 4);
+    }
+}
+
+/// Draw one rectangle's border into the DIB buffer. Does NOT call UpdateLayeredWindow.
+#[cfg(windows)]
+fn draw_rect_in_dib(
+    cache: &mut DibCache,
+    width: i32,
+    height: i32,
+    win_x: i32,
+    win_y: i32,
     start: (i32, i32),
     current: (i32, i32),
     border_width: i32,
     color_mode: &ColorMode,
-    dib_cache: &mut Option<DibCache>,
+    time_offset: f32,
 ) {
-    use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
-    use windows::Win32::Graphics::Gdi::*;
-    use windows::Win32::UI::WindowsAndMessaging::*;
-
-    let hwnd = get_hwnd(window);
-
     unsafe {
-        let mut wr = RECT::default();
-        if GetWindowRect(hwnd, &mut wr).is_err() {
-            return;
-        }
-
-        let width = wr.right - wr.left;
-        let height = wr.bottom - wr.top;
-
-        if width <= 0 || height <= 0 {
-            return;
-        }
-
-        // Allocate or resize cached DIB
-        match dib_cache {
-            Some(cache) => cache.ensure_size(width, height),
-            None => {
-                *dib_cache = DibCache::new(width, height);
-            }
-        }
-        let cache = match dib_cache {
-            Some(c) if !c.pixels.is_null() => c,
-            _ => return,
-        };
-
-        // Entire window fully transparent
-        std::ptr::write_bytes(
-            cache.pixels,
-            0,
-            width as usize * height as usize * 4,
-        );
-
-        let elapsed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
-
-        // Build a mutable slice over the cached pixel buffer
         let pixel_slice = std::slice::from_raw_parts_mut(
             cache.pixels,
             width as usize * height as usize * 4,
         );
-
         fill_border_pixels(
-            pixel_slice,
-            width,
-            height,
-            wr.left,
-            wr.top,
-            start,
-            current,
-            border_width,
-            color_mode,
-            time_offset,
+            pixel_slice, width, height, win_x, win_y,
+            start, current, border_width, color_mode, time_offset,
         );
+    }
+}
 
-        let destination = POINT {
-            x: wr.left,
-            y: wr.top,
-        };
+/// Push the DIB buffer to screen via UpdateLayeredWindow.
+#[cfg(windows)]
+fn commit_dib(window: &Window, cache: &DibCache, width: i32, height: i32, win_x: i32, win_y: i32) {
+    use windows::Win32::Foundation::{COLORREF, HWND, POINT, SIZE};
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
 
+    let hwnd = get_hwnd(window);
+    unsafe {
+        let destination = POINT { x: win_x, y: win_y };
         let source = POINT { x: 0, y: 0 };
-
-        let size = SIZE {
-            cx: width,
-            cy: height,
-        };
-
+        let size = SIZE { cx: width, cy: height };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
             SourceConstantAlpha: 255,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
-
         let screen_dc = GetDC(HWND::default());
-
         let result = UpdateLayeredWindow(
-            hwnd,
-            screen_dc,
-            Some(&destination),
-            Some(&size),
-            cache.memory_dc,
-            Some(&source),
-            COLORREF(0),
-            Some(&blend),
-            ULW_ALPHA,
+            hwnd, screen_dc, Some(&destination), Some(&size),
+            cache.memory_dc, Some(&source), COLORREF(0), Some(&blend), ULW_ALPHA,
         );
-
         if let Err(error) = result {
             eprintln!("UpdateLayeredWindow failed: {error:?}");
         }
-
         let _ = ReleaseDC(HWND::default(), screen_dc);
     }
 }
