@@ -3,7 +3,6 @@ use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 
 use windows::Win32::Foundation::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use winit::event_loop::EventLoopProxy;
 
@@ -176,6 +175,7 @@ pub(crate) fn decide_mouse(
 
 #[cfg(test)]
 mod tests {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
     use super::*;
 
     #[test]

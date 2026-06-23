@@ -556,6 +556,7 @@ fn fill_border_pixels(
 
 /// Expected number of unique border pixels for a rect (x0,y0)-(x1,y1) with given border_width.
 /// This is the correct count with no double-writes at corners.
+#[cfg(test)]
 fn expected_border_pixel_count(x0: i32, y0: i32, x1: i32, y1: i32, border_width: i32) -> usize {
     let mut count = 0usize;
     for offset in 0..border_width {
