@@ -312,6 +312,20 @@ mod tests {
         assert_eq!(state.drawing, DrawingState::Armed);
     }
 
+    // --- InputEvent variant construction ---
+
+    #[test]
+    fn digit_pressed_variant_constructs() {
+        let event = InputEvent::DigitPressed(1);
+        assert_eq!(event, InputEvent::DigitPressed(1));
+    }
+
+    #[test]
+    fn escape_pressed_variant_constructs() {
+        let event = InputEvent::EscapePressed;
+        assert_eq!(event, InputEvent::EscapePressed);
+    }
+
     // --- Trait coverage ---
 
     #[test]
