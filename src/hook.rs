@@ -56,7 +56,8 @@ unsafe extern "system" fn keyboard_hook_proc(
         let kb = *(l_param.0 as *const KBDLLHOOKSTRUCT);
         let is_key_down = w_param == WPARAM(WM_KEYDOWN as usize) || w_param == WPARAM(WM_SYSKEYDOWN as usize);
 
-        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, MODIFIER_CODES.get().expect("MODIFIER_CODES not set")) {
+        let modifier_held = SHOULD_SUPPRESS.load(Ordering::Relaxed);
+        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, MODIFIER_CODES.get().expect("MODIFIER_CODES not set"), modifier_held) {
             SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
             if let Some(tx) = TX.get() {
                 let _ = tx.send(event);
@@ -115,11 +116,19 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 // Pure decision function — no Win32 side effects, fully unit-testable
-pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32]) -> Option<InputEvent> {
-    if !modifier_codes.contains(&vk_code) {
-        return None;
+pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32], modifier_held: bool) -> Option<InputEvent> {
+    if modifier_codes.contains(&vk_code) {
+        return Some(InputEvent::ModifierChanged { pressed: is_key_down });
     }
-    Some(InputEvent::ModifierChanged { pressed: is_key_down })
+    if is_key_down {
+        if modifier_held && vk_code == 0x31 {
+            return Some(InputEvent::DigitPressed(1));
+        }
+        if vk_code == 0x1B {
+            return Some(InputEvent::EscapePressed);
+        }
+    }
+    None
 }
 
 /// Pure decision function for mouse events.
@@ -167,43 +176,43 @@ mod tests {
 
     #[test]
     fn alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_LMENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_LMENU.0 as u32, true, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn alt_up_returns_modifier_released() {
-        let result = decide_keyboard(VK_LMENU.0 as u32, false, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_LMENU.0 as u32, false, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
     fn right_alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_RMENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_RMENU.0 as u32, true, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn generic_alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_MENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_MENU.0 as u32, true, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn generic_alt_up_returns_modifier_released() {
-        let result = decide_keyboard(VK_MENU.0 as u32, false, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_MENU.0 as u32, false, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
     fn non_alt_key_returns_none() {
-        let result = decide_keyboard(VK_LSHIFT.0 as u32, true, &[0x12, 0xA4, 0xA5]);
+        let result = decide_keyboard(VK_LSHIFT.0 as u32, true, &[0x12, 0xA4, 0xA5], false);
         assert_eq!(result, None);
     }
 
     #[test]
     fn non_alt_key_up_returns_none() {
-        let result = decide_keyboard(0x41, false, &[0x12, 0xA4, 0xA5]); // 'A' key
+        let result = decide_keyboard(0x41, false, &[0x12, 0xA4, 0xA5], false); // 'A' key
         assert_eq!(result, None);
     }
 
@@ -282,7 +291,7 @@ mod tests {
 
         // Step 1: Alt pressed — keyboard hook fires
         let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
-        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes);
+        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
         should_suppress = true; // hook proc stores this
 
@@ -305,7 +314,7 @@ mod tests {
         drag_in_progress = false; // hook proc stores this on suppress+LButtonUp
 
         // Step 5: Alt released — keyboard hook fires
-        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes);
+        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
         should_suppress = false; // hook proc stores this
 
@@ -354,37 +363,37 @@ mod tests {
     #[test]
     fn alt_key_with_alt_config_detected() {
         let codes = vec![0x12, 0xA4, 0xA5];
-        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn ctrl_key_with_ctrl_config_detected() {
         let codes = vec![0x11, 0xA2, 0xA3];
-        assert_eq!(decide_keyboard(VK_LCONTROL.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        assert_eq!(decide_keyboard(VK_LCONTROL.0 as u32, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn shift_key_with_shift_config_detected() {
         let codes = vec![0x10, 0xA0, 0xA1];
-        assert_eq!(decide_keyboard(VK_LSHIFT.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        assert_eq!(decide_keyboard(VK_LSHIFT.0 as u32, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn win_key_with_win_config_detected() {
         let codes = vec![0x5B, 0x5C];
-        assert_eq!(decide_keyboard(VK_LWIN.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        assert_eq!(decide_keyboard(VK_LWIN.0 as u32, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn non_modifier_ignored_with_alt_config() {
         let codes = vec![0x12, 0xA4, 0xA5];
-        assert_eq!(decide_keyboard(0x41, true, &codes), None); // 'A' key
+        assert_eq!(decide_keyboard(0x41, true, &codes, false), None); // 'A' key
     }
 
     #[test]
     fn alt_key_not_detected_with_ctrl_config() {
         let codes = vec![0x11, 0xA2, 0xA3]; // Ctrl config
-        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes), None);
+        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes, false), None);
     }
 
     // -- decide_keyboard edge cases --
@@ -392,25 +401,25 @@ mod tests {
     #[test]
     fn decide_keyboard_empty_modifier_codes_returns_none() {
         let codes: Vec<u32> = vec![];
-        assert_eq!(decide_keyboard(0x12, true, &codes), None);
+        assert_eq!(decide_keyboard(0x12, true, &codes, false), None);
     }
 
     #[test]
     fn decide_keyboard_zero_vk_code_not_in_codes() {
         let codes = vec![0x12, 0xA4, 0xA5];
-        assert_eq!(decide_keyboard(0, true, &codes), None);
+        assert_eq!(decide_keyboard(0, true, &codes, false), None);
     }
 
     #[test]
     fn decide_keyboard_zero_vk_code_in_codes() {
         let codes = vec![0, 0x12];
-        assert_eq!(decide_keyboard(0, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        assert_eq!(decide_keyboard(0, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn decide_keyboard_max_u32_not_in_codes() {
         let codes = vec![0x12, 0xA4, 0xA5];
-        assert_eq!(decide_keyboard(u32::MAX, true, &codes), None);
+        assert_eq!(decide_keyboard(u32::MAX, true, &codes, false), None);
     }
 
     // -- decide_mouse edge cases --
@@ -492,7 +501,7 @@ mod tests {
         let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
 
         // Alt down
-        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes);
+        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
         should_suppress = true;
 
@@ -528,7 +537,7 @@ mod tests {
         drag_in_progress = false;
 
         // Alt up
-        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes);
+        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes, false);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
         should_suppress = false;
 
@@ -546,5 +555,51 @@ mod tests {
     fn drag_move_with_max_coordinates() {
         let (event, _) = decide_mouse(WM_MOUSEMOVE, (i32::MAX, i32::MIN), false, true, false);
         assert_eq!(event, Some(InputEvent::MouseMove { x: i32::MAX, y: i32::MIN }));
+    }
+
+    // --- DigitPressed and EscapePressed tests ---
+
+    #[test]
+    fn digit_1_modifier_held_emits_digit_pressed() {
+        let result = decide_keyboard(0x31, true, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, Some(InputEvent::DigitPressed(1)));
+    }
+
+    #[test]
+    fn digit_1_modifier_not_held_returns_none() {
+        let result = decide_keyboard(0x31, true, &[0x12, 0xA4, 0xA5], false);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn digit_1_key_up_returns_none() {
+        let result = decide_keyboard(0x31, false, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn digit_2_modifier_held_returns_none() {
+        // Only digit 1 handled for now; 2 is reserved for Spotlight
+        let result = decide_keyboard(0x32, true, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn escape_modifier_held_emits_escape_pressed() {
+        let result = decide_keyboard(0x1B, true, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, Some(InputEvent::EscapePressed));
+    }
+
+    #[test]
+    fn escape_modifier_not_held_also_emits_escape_pressed() {
+        // Esc works without modifier — user can clear pinned rects anytime
+        let result = decide_keyboard(0x1B, true, &[0x12, 0xA4, 0xA5], false);
+        assert_eq!(result, Some(InputEvent::EscapePressed));
+    }
+
+    #[test]
+    fn escape_key_up_returns_none() {
+        let result = decide_keyboard(0x1B, false, &[0x12, 0xA4, 0xA5], true);
+        assert_eq!(result, None);
     }
 }

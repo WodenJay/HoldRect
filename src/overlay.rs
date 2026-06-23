@@ -1259,36 +1259,36 @@ modifier = "Ctrl""#;
         #[test]
         fn decide_keyboard_zero_vk_code_returns_none() {
             let codes = vec![0x12, 0xA4, 0xA5];
-            let result = decide_keyboard(0, true, &codes);
+            let result = decide_keyboard(0, true, &codes, false);
             assert_eq!(result, None);
         }
 
         #[test]
         fn decide_keyboard_max_u32_vk_code_returns_none() {
             let codes = vec![0x12, 0xA4, 0xA5];
-            let result = decide_keyboard(u32::MAX, true, &codes);
+            let result = decide_keyboard(u32::MAX, true, &codes, false);
             assert_eq!(result, None);
         }
 
         #[test]
         fn decide_keyboard_zero_vk_code_in_modifier_codes_matches() {
             let codes = vec![0];
-            let result = decide_keyboard(0, true, &codes);
+            let result = decide_keyboard(0, true, &codes, false);
             assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
         }
 
         #[test]
         fn decide_keyboard_single_element_exact_match() {
             let codes = vec![0x12];
-            assert_eq!(decide_keyboard(0x12, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
-            assert_eq!(decide_keyboard(0x12, false, &codes), Some(InputEvent::ModifierChanged { pressed: false }));
-            assert_eq!(decide_keyboard(0x11, true, &codes), None);
+            assert_eq!(decide_keyboard(0x12, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
+            assert_eq!(decide_keyboard(0x12, false, &codes, false), Some(InputEvent::ModifierChanged { pressed: false }));
+            assert_eq!(decide_keyboard(0x11, true, &codes, false), None);
         }
 
         #[test]
         fn decide_keyboard_duplicate_modifier_codes_matches() {
             let codes = vec![0x12, 0x12, 0xA4];
-            assert_eq!(decide_keyboard(0x12, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+            assert_eq!(decide_keyboard(0x12, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
         }
 
         #[test]
@@ -1367,7 +1367,7 @@ modifier = "Ctrl""#;
             let mut drag_in_progress = false;
             let ctrl_codes: &[u32] = &[0x11, 0xA2, 0xA3];
 
-            let event = decide_keyboard(VK_LCONTROL.0 as u32, true, ctrl_codes);
+            let event = decide_keyboard(VK_LCONTROL.0 as u32, true, ctrl_codes, false);
             assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
             should_suppress = true;
 
@@ -1385,7 +1385,7 @@ modifier = "Ctrl""#;
             assert!(suppress);
             drag_in_progress = false;
 
-            let event = decide_keyboard(VK_LCONTROL.0 as u32, false, ctrl_codes);
+            let event = decide_keyboard(VK_LCONTROL.0 as u32, false, ctrl_codes, false);
             assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
             should_suppress = false;
 
