@@ -80,10 +80,10 @@ unsafe extern "system" fn mouse_hook_proc(
         // Alt-held state. GetAsyncKeyState(VK_MENU) is unreliable inside
         // WH_MOUSE_LL callbacks in browsers/terminals.
         let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
-        let ctrl = suppress;
+        let alt_held = suppress;
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
 
-        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, ctrl);
+        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, alt_held);
 
         // Update DRAG_IN_PROGRESS based on decision.
         // Gated on `should_suppress` because decide_mouse returns true exactly
@@ -328,9 +328,9 @@ mod tests {
         // Alt released mid-drag, mouse move still tracks position but passes through
         let should_suppress = false;
         let drag_in_progress = true;
-        let ctrl = false;
+        let alt_held = false;
 
-        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (400, 500), should_suppress, drag_in_progress, ctrl);
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (400, 500), should_suppress, drag_in_progress, alt_held);
         assert_eq!(event, Some(InputEvent::MouseMove { x: 400, y: 500 }));
         assert!(!suppress, "MouseMove must pass through during drag even if Ctrl released");
     }
