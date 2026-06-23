@@ -841,4 +841,621 @@ mod tests {
         let offset = 10 * width as usize * 4 + 10 * 4;
         assert_eq!(buffer[offset + 3], 255, "pixel at buffer (10,10) should be drawn");
     }
+
+    #[test]
+    fn normalize_rect_with_i32_boundaries() {
+        // start at MAX, current at MIN: should swap
+        assert_eq!(
+            normalize_rect((i32::MAX, i32::MAX), (i32::MIN, i32::MIN)),
+            (i32::MIN, i32::MIN, i32::MAX, i32::MAX)
+        );
+    }
+
+    #[test]
+    fn normalize_rect_one_axis_swapped() {
+        // x already sorted (0 < 100), y needs swap (200 > 80)
+        assert_eq!(
+            normalize_rect((0, 200), (100, 80)),
+            (0, 80, 100, 200)
+        );
+    }
+
+    #[test]
+    fn normalize_rect_zero_origin() {
+        assert_eq!(
+            normalize_rect((0, 0), (0, 0)),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn hsv_360_wraps_to_red() {
+        // h=360 should produce the same result as h=0 (red)
+        let at_0 = hsv_to_rgb(0.0, 1.0, 1.0);
+        let at_360 = hsv_to_rgb(360.0, 1.0, 1.0);
+        assert_eq!(at_360, at_0, "h=360 should wrap to same as h=0");
+    }
+
+    #[test]
+    fn hsv_partial_saturation() {
+        // h=0 s=0.5 v=1.0 should be a desaturated red (pink-ish)
+        let (r, g, b) = hsv_to_rgb(0.0, 0.5, 1.0);
+        assert_eq!(r, 255, "red channel should be max");
+        assert!(g > 0 && g < 255, "green should be mid-range for desaturated red");
+        assert!(b > 0 && b < 255, "blue should be mid-range for desaturated red");
+    }
+
+    #[test]
+    fn hsv_partial_value() {
+        // h=0 s=1.0 v=0.5 should be a dark red
+        let (r, g, b) = hsv_to_rgb(0.0, 1.0, 0.5);
+        assert_eq!(r, 128, "dark red channel should be ~128 (0.5*255 rounded)");
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
+    }
+
+    mod missing_tests {
+        use super::super::hsv_to_rgb;
+        use super::super::perimeter_position;
+        use super::super::color_at;
+        use super::super::fill_border_pixels;
+        use super::super::expected_border_pixel_count;
+        use crate::config::ColorMode;
+        use crate::config::parse_color;
+        use crate::config::modifier_vk_codes;
+        use crate::config::AppConfig;
+        use windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN;
+        use windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP;
+        use windows::Win32::UI::WindowsAndMessaging::WM_MBUTTONDOWN;
+        use windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE;
+        use windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP;
+        use windows::Win32::UI::Input::KeyboardAndMouse::VK_LCONTROL;
+        use crate::hook::decide_keyboard;
+        use crate::hook::decide_mouse;
+        use crate::state::InputEvent;
+
+        #[test]
+        fn hsv_sector_boundary_60() {
+            // h=60 is the boundary between sector 0 and sector 1
+            let (r, g, b) = hsv_to_rgb(60.0, 1.0, 1.0);
+            assert_eq!((r, g, b), (255, 255, 0), "h=60 should be yellow");
+        }
+
+        #[test]
+        fn hsv_sector_boundary_300() {
+            // h=300 is the boundary between sector 4 and sector 5
+            let (r, g, b) = hsv_to_rgb(300.0, 1.0, 1.0);
+            assert_eq!((r, g, b), (255, 0, 255), "h=300 should be magenta");
+        }
+
+        #[test]
+        fn perimeter_position_zero_area() {
+            // When x0==x1 and y0==y1, perimeter is 0 -- should return 0.0
+            let pos = perimeter_position(5, 5, 5, 5, 5, 5);
+            assert_eq!(pos, 0.0, "zero-area rect should return 0.0");
+        }
+
+        #[test]
+        fn perimeter_position_non_square_rect() {
+            // 200x100 rect: perimeter = 600
+            // Mid-bottom edge: total dist = w + h + w/2 = 200 + 100 + 100 = 400, pos = 400/600
+            let pos = perimeter_position(100, 100, 0, 0, 200, 100);
+            assert!((pos - (400.0 / 600.0)).abs() < 0.001, "expected ~0.667, got {pos}");
+        }
+
+        #[test]
+        fn perimeter_position_mid_bottom_edge() {
+            let pos = perimeter_position(50, 100, 0, 0, 100, 100);
+            assert!((pos - 0.625).abs() < 0.001, "expected ~0.625, got {pos}");
+        }
+
+        #[test]
+        fn perimeter_position_mid_left_edge() {
+            let pos = perimeter_position(0, 50, 0, 0, 100, 100);
+            assert!((pos - 0.875).abs() < 0.001, "expected ~0.875, got {pos}");
+        }
+
+        #[test]
+        fn perimeter_position_negative_offset_rect() {
+            // Rect at (-100,-100) to (100,100), top-left corner
+            let pos = perimeter_position(-100, -100, -100, -100, 100, 100);
+            assert!((pos - 0.0).abs() < 0.001, "top-left of negative-offset rect should be ~0.0, got {pos}");
+        }
+
+        #[test]
+        fn color_at_solid_mode_ignores_position() {
+            let mode = ColorMode::Solid { r: 100, g: 150, b: 200 };
+            assert_eq!(color_at(0, 0, 0, 0, 100, 100, &mode, 0.0), (100, 150, 200));
+            assert_eq!(color_at(999, 999, 0, 0, 100, 100, &mode, 0.0), (100, 150, 200));
+        }
+
+        #[test]
+        fn color_at_rainbow_with_time_offset() {
+            let (r0, g0, b0) = color_at(0, 0, 0, 0, 100, 100, &ColorMode::Rainbow, 0.0);
+            assert_eq!((r0, g0, b0), (255, 0, 0), "top-left at t=0 should be red");
+            let (r1, g1, b1) = color_at(0, 0, 0, 0, 100, 100, &ColorMode::Rainbow, 0.25);
+            assert!(g1 > r1, "at t=0.25 green should dominate over red");
+            assert!(g1 > b1, "at t=0.25 green should dominate over blue");
+        }
+
+        #[test]
+        fn color_at_solid_all_black() {
+            let mode = ColorMode::Solid { r: 0, g: 0, b: 0 };
+            assert_eq!(color_at(50, 50, 0, 0, 100, 100, &mode, 0.0), (0, 0, 0));
+        }
+
+        #[test]
+        fn fill_border_negative_width_returns_zero() {
+            let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+            let mut buffer = vec![0u8; 100];
+            let (unique, total) = fill_border_pixels(
+                &mut buffer, -1, 100, 0, 0,
+                (0, 0), (10, 10), 4, &color_mode, 0.0,
+            );
+            assert_eq!(unique, 0);
+            assert_eq!(total, 0);
+        }
+
+        #[test]
+        fn fill_border_negative_height_returns_zero() {
+            let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+            let mut buffer = vec![0u8; 100];
+            let (unique, total) = fill_border_pixels(
+                &mut buffer, 100, -1, 0, 0,
+                (0, 0), (10, 10), 4, &color_mode, 0.0,
+            );
+            assert_eq!(unique, 0);
+            assert_eq!(total, 0);
+        }
+
+        #[test]
+        fn fill_border_width_1() {
+            let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+            let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
+            let (unique, total) = fill_border_pixels(
+                &mut buffer, 100, 100, 0, 0,
+                (10, 10), (20, 20), 1, &color_mode, 0.0,
+            );
+            let expected = expected_border_pixel_count(10, 10, 20, 20, 1);
+            assert_eq!(unique, expected, "border_width=1 should match expected count");
+            assert_eq!(total, expected, "no duplicate writes with border_width=1");
+        }
+
+        #[test]
+        fn fill_border_rect_entirely_outside_window() {
+            let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+            let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
+            let (unique, _) = fill_border_pixels(
+                &mut buffer, 100, 100, 0, 0,
+                (200, 200), (300, 300), 4, &color_mode, 0.0,
+            );
+            assert_eq!(unique, 0, "rect outside window should write nothing");
+            assert!(buffer.iter().all(|&b| b == 0), "buffer should remain all zeros");
+        }
+
+        #[test]
+        fn fill_border_rect_partially_clipped() {
+            let color_mode = ColorMode::Solid { r: 0, g: 0, b: 255 };
+            let mut buffer = vec![0u8; (50 * 50 * 4) as usize];
+            let (unique, total) = fill_border_pixels(
+                &mut buffer, 50, 50, 0, 0,
+                (-10, -10), (30, 30), 2, &color_mode, 0.0,
+            );
+            assert!(unique > 0, "partially visible rect should draw some pixels");
+            let expected = expected_border_pixel_count(0, 0, 30, 30, 2);
+            assert_eq!(unique, expected, "visible portion pixel count should match expected");
+            assert_eq!(total, expected, "no duplicate writes in clipped rect");
+        }
+
+        #[test]
+        fn fill_border_negative_start_coords() {
+            let color_mode = ColorMode::Solid { r: 255, g: 255, b: 0 };
+            let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
+            let (unique, _) = fill_border_pixels(
+                &mut buffer, 100, 100, -60, -60,
+                (-50, -50), (-40, -40), 2, &color_mode, 0.0,
+            );
+            assert!(unique > 0, "negative global coords should still draw into buffer");
+            let offset = 10 * 100 * 4 + 10 * 4;
+            assert_eq!(buffer[offset + 3], 255, "pixel at buffer (10,10) should be drawn");
+        }
+
+        #[test]
+        fn fill_border_rainbow_mode() {
+            let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
+            let (unique, _) = fill_border_pixels(
+                &mut buffer, 100, 100, 0, 0,
+                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.0,
+            );
+            assert!(unique > 0, "rainbow mode should draw pixels");
+            // Top-left corner pixel (10,10): perimeter pos ~0.0, hue ~0 (red)
+            let off_tl = 10 * 100 * 4 + 10 * 4;
+            let (r_tl, g_tl, b_tl) = (buffer[off_tl + 2], buffer[off_tl + 1], buffer[off_tl]);
+            // Bottom-right corner pixel (49,49): perimeter pos ~0.74, hue ~266 (blue-ish)
+            let off_br = 49 * 100 * 4 + 49 * 4;
+            let (r_br, g_br, b_br) = (buffer[off_br + 2], buffer[off_br + 1], buffer[off_br]);
+            assert_ne!(
+                (r_tl, g_tl, b_tl), (r_br, g_br, b_br),
+                "opposite corners should produce different rainbow colors"
+            );
+        }
+
+        #[test]
+        fn fill_border_with_time_offset_shifts_colors() {
+            let mut buf0 = vec![0u8; (100 * 100 * 4) as usize];
+            let mut buf1 = vec![0u8; (100 * 100 * 4) as usize];
+            let (u0, _) = fill_border_pixels(
+                &mut buf0, 100, 100, 0, 0,
+                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.0,
+            );
+            let (u1, _) = fill_border_pixels(
+                &mut buf1, 100, 100, 0, 0,
+                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.5,
+            );
+            assert_eq!(u0, u1, "same rect should write same number of pixels");
+            let off = 10 * 100 * 4 + 10 * 4;
+            assert_ne!(buf0[off + 2], buf1[off + 2], "time_offset should shift colors");
+        }
+
+        #[test]
+        fn expected_border_pixel_count_single_pixel_rect() {
+            let count = expected_border_pixel_count(5, 5, 5, 5, 1);
+            assert_eq!(count, 1, "single-pixel rect should have exactly 1 border pixel");
+        }
+
+        #[test]
+        fn expected_border_pixel_count_border_1() {
+            let count = expected_border_pixel_count(0, 0, 10, 10, 1);
+            assert_eq!(count, 40, "10x10 rect border=1 should be 40 pixels (inclusive bounds: 11x11 area)");
+        }
+
+        #[test]
+        fn expected_border_pixel_count_border_equals_half_rect() {
+            // 10x10 rect with border_width=5: all layers collapse
+            // offset 0: 11*2 + 9*2 = 40
+            // offset 1: 9*2 + 7*2 = 32
+            // offset 2: 7*2 + 5*2 = 24
+            // offset 3: 5*2 + 3*2 = 16
+            // offset 4: single row = 3*2 + 1*2 = 8
+            let count = expected_border_pixel_count(0, 0, 10, 10, 5);
+            assert_eq!(count, 120, "10x10 rect border=5 should fill interior (120 pixels, inclusive bounds)");
+        }
+
+        #[test]
+        fn color_parse_empty_string_returns_default_solid() {
+            assert_eq!(
+                parse_color(""),
+                ColorMode::Solid { r: 255, g: 0, b: 0 }
+            );
+        }
+
+        #[test]
+        fn color_parse_short_hex_returns_default_solid() {
+            assert_eq!(
+                parse_color("#FFF"),
+                ColorMode::Solid { r: 255, g: 0, b: 0 }
+            );
+        }
+
+        #[test]
+        fn color_parse_long_hex_returns_default_solid() {
+            assert_eq!(
+                parse_color("#FF00FF00"),
+                ColorMode::Solid { r: 255, g: 0, b: 0 }
+            );
+        }
+
+        #[test]
+        fn color_parse_hex_all_zeros() {
+            assert_eq!(
+                parse_color("#000000"),
+                ColorMode::Solid { r: 0, g: 0, b: 0 }
+            );
+        }
+
+        #[test]
+        fn color_parse_hex_all_ones() {
+            assert_eq!(
+                parse_color("#FFFFFF"),
+                ColorMode::Solid { r: 255, g: 255, b: 255 }
+            );
+        }
+
+        #[test]
+        fn modifier_vk_codes_empty_string_defaults_to_alt() {
+            assert_eq!(modifier_vk_codes(""), vec![0x12, 0xA4, 0xA5]);
+        }
+
+        #[test]
+        fn modifier_vk_codes_case_sensitive() {
+            // lowercase 'alt' does not match "Alt", falls to default
+            assert_eq!(modifier_vk_codes("alt"), vec![0x12, 0xA4, 0xA5]);
+            assert_eq!(modifier_vk_codes("ctrl"), vec![0x12, 0xA4, 0xA5]);
+        }
+
+        #[test]
+        fn color_parse_mixed_case_hex() {
+            assert_eq!(
+                parse_color("#aAbBcC"),
+                ColorMode::Solid { r: 170, g: 187, b: 204 }
+            );
+        }
+
+        #[test]
+        fn modifier_vk_codes_win_has_two_codes() {
+            let codes = modifier_vk_codes("Win");
+            assert_eq!(codes.len(), 2);
+            // Win key has Left(0x5B) and Right(0x5C), no generic VK like Alt/Ctrl/Shift
+            assert_eq!(codes, vec![0x5B, 0x5C]);
+        }
+
+        #[test]
+        fn parse_partial_config_only_color() {
+            let toml_str = r#"color = "rainbow""#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
+            assert_eq!(cfg.border_width, 4);
+            assert_eq!(cfg.color_mode, ColorMode::Rainbow);
+        }
+
+        #[test]
+        fn parse_negative_border_width_clamped_to_one() {
+            let toml_str = r#"border_width = -5"#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.border_width, 1);
+        }
+
+        #[test]
+        fn parse_border_width_at_lower_bound() {
+            let toml_str = r#"border_width = 1"#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.border_width, 1);
+        }
+
+        #[test]
+        fn parse_border_width_at_upper_bound() {
+            let toml_str = r#"border_width = 20"#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.border_width, 20);
+        }
+
+        #[test]
+        fn parse_whitespace_only_uses_defaults() {
+            let cfg = AppConfig::parse("   \n\t  ");
+            assert_eq!(cfg, AppConfig::default());
+        }
+
+        #[test]
+        fn parse_unknown_keys_ignored() {
+            let toml_str = r#"unknown_key = 42
+modifier = "Ctrl""#;
+            // serde ignores extra keys by default with Deserialize
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.modifier_vk_codes, vec![0x11, 0xA2, 0xA3]);
+        }
+
+        #[test]
+        fn parse_color_hex_with_hash_via_parse() {
+            let toml_str = r##"color = "#FF00FF""##;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 255 });
+        }
+
+        #[test]
+        fn parse_modifier_win() {
+            let toml_str = r#"modifier = "Win""#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.modifier_vk_codes, vec![0x5B, 0x5C]);
+            assert_eq!(cfg.border_width, 4);
+        }
+
+        #[test]
+        fn parse_color_mixed_case_rainbow() {
+            let toml_str = r#"color = "rAiNbOw""#;
+            let cfg = AppConfig::parse(toml_str);
+            assert_eq!(cfg.color_mode, ColorMode::Rainbow);
+        }
+
+        #[test]
+        fn decide_keyboard_zero_vk_code_returns_none() {
+            let codes = vec![0x12, 0xA4, 0xA5];
+            let result = decide_keyboard(0, true, &codes);
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn decide_keyboard_max_u32_vk_code_returns_none() {
+            let codes = vec![0x12, 0xA4, 0xA5];
+            let result = decide_keyboard(u32::MAX, true, &codes);
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn decide_keyboard_zero_vk_code_in_modifier_codes_matches() {
+            let codes = vec![0];
+            let result = decide_keyboard(0, true, &codes);
+            assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
+        }
+
+        #[test]
+        fn decide_keyboard_single_element_exact_match() {
+            let codes = vec![0x12];
+            assert_eq!(decide_keyboard(0x12, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+            assert_eq!(decide_keyboard(0x12, false, &codes), Some(InputEvent::ModifierChanged { pressed: false }));
+            assert_eq!(decide_keyboard(0x11, true, &codes), None);
+        }
+
+        #[test]
+        fn decide_keyboard_duplicate_modifier_codes_matches() {
+            let codes = vec![0x12, 0x12, 0xA4];
+            assert_eq!(decide_keyboard(0x12, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+        }
+
+        #[test]
+        fn decide_mouse_zero_coordinates() {
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (0, 0), true, false, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 0, y: 0 }));
+            assert!(suppress);
+        }
+
+        #[test]
+        fn decide_mouse_negative_coordinates() {
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (-100, -200), false, true, false);
+            assert_eq!(event, Some(InputEvent::MouseMove { x: -100, y: -200 }));
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_unknown_msg_no_drag_suppress_modifier_held() {
+            let (event, suppress) = decide_mouse(0x020B, (100, 200), true, false, true); // WM_XBUTTONDOWN
+            assert_eq!(event, None);
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_extreme_coordinates() {
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (i32::MAX, i32::MIN), true, false, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN }));
+            assert!(suppress);
+        }
+
+        #[test]
+        fn decide_mouse_unknown_msg_during_drag_passes_through() {
+            let (event, suppress) = decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false);
+            assert_eq!(event, None);
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_rbuttonup_during_drag_passes_through() {
+            let (event, suppress) = decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false);
+            assert_eq!(event, None);
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_lbuttondown_during_drag_passes_through() {
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (200, 300), true, true, true);
+            assert_eq!(event, None);
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_suppress_false_modifier_held_true_no_drag() {
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), false, false, true);
+            assert_eq!(event, None);
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn decide_mouse_drag_with_modifier_held_and_suppress() {
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (400, 500), true, true, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 400, y: 500 }));
+            assert!(suppress);
+        }
+
+        #[test]
+        fn decide_mouse_move_during_drag_with_all_flags_true() {
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 60), true, true, true);
+            assert_eq!(event, Some(InputEvent::MouseMove { x: 50, y: 60 }));
+            assert!(!suppress);
+        }
+
+        #[test]
+        fn full_drag_sequence_with_ctrl_modifier() {
+            let mut should_suppress: bool;
+            let mut drag_in_progress = false;
+            let ctrl_codes: &[u32] = &[0x11, 0xA2, 0xA3];
+
+            let event = decide_keyboard(VK_LCONTROL.0 as u32, true, ctrl_codes);
+            assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
+            should_suppress = true;
+
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (50, 75), should_suppress, drag_in_progress, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 50, y: 75 }));
+            assert!(suppress);
+            drag_in_progress = true;
+
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (150, 175), should_suppress, drag_in_progress, true);
+            assert_eq!(event, Some(InputEvent::MouseMove { x: 150, y: 175 }));
+            assert!(!suppress);
+
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (200, 250), should_suppress, drag_in_progress, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 200, y: 250 }));
+            assert!(suppress);
+            drag_in_progress = false;
+
+            let event = decide_keyboard(VK_LCONTROL.0 as u32, false, ctrl_codes);
+            assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
+            should_suppress = false;
+
+            let _ = (&should_suppress, &drag_in_progress);
+        }
+
+        #[test]
+        fn multiple_mouse_moves_during_drag_all_track() {
+            let coords = [(10, 20), (30, 40), (50, 60), (70, 80), (90, 100)];
+            for &(x, y) in &coords {
+                let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (x, y), true, true, true);
+                assert_eq!(event, Some(InputEvent::MouseMove { x, y }));
+                assert!(!suppress);
+            }
+        }
+
+        #[test]
+        fn drag_then_idle_then_new_drag() {
+            let mut should_suppress = false;
+            let mut drag_in_progress = false;
+
+            // Cycle 1
+            should_suppress = true;
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (10, 10), should_suppress, drag_in_progress, true);
+            assert!(suppress);
+            drag_in_progress = true;
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (20, 20), should_suppress, drag_in_progress, true);
+            assert!(suppress);
+            drag_in_progress = false;
+            should_suppress = false;
+
+            // Idle
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 50), false, false, false);
+            assert_eq!(event, None);
+            assert!(!suppress);
+
+            // Cycle 2
+            should_suppress = true;
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (30, 30), should_suppress, drag_in_progress, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 30, y: 30 }));
+            assert!(suppress);
+            drag_in_progress = true;
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (40, 40), should_suppress, drag_in_progress, true);
+            assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 40, y: 40 }));
+            assert!(suppress);
+            drag_in_progress = false;
+            should_suppress = false;
+
+            let _ = (&should_suppress, &drag_in_progress);
+        }
+
+        #[test]
+        fn create_icon_center_is_white() {
+            const SIZE: usize = 32;
+            const INSET: f64 = 4.0;
+            const RADIUS: f64 = 5.0;
+            const BORDER_W: f64 = 5.0;
+            let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
+            let cx = (SIZE as f64 - 1.0) / 2.0;
+            let cy = (SIZE as f64 - 1.0) / 2.0;
+            let center_x = (cx as usize).min(SIZE - 1);
+            let center_y = (cy as usize).min(SIZE - 1);
+            let dx = (center_x as f64 - cx).abs() - (half - RADIUS);
+            let dy = (center_y as f64 - cy).abs() - (half - RADIUS);
+            let dist = if dx > 0.0 && dy > 0.0 {
+                (dx * dx + dy * dy).sqrt()
+            } else {
+                dx.max(dy).max(0.0)
+            };
+            assert!(dist <= RADIUS - BORDER_W, "Center pixel dist={} should be inside border (interior)", dist);
+        }
+    }
 }

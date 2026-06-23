@@ -178,4 +178,154 @@ mod tests {
             DrawingState::Drawing { start: (10, 20), current: (50, 80) }
         );
     }
+
+    // --- Missing catch-all coverage (untested state/event pairs) ---
+
+    #[test]
+    fn idle_mouse_button_up_is_noop() {
+        let state = AppState { drawing: DrawingState::Idle };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn armed_mouse_button_up_is_noop() {
+        let state = AppState { drawing: DrawingState::Armed };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    // --- Boundary values ---
+
+    #[test]
+    fn drawing_with_negative_coordinates() {
+        let state = AppState { drawing: DrawingState::Armed };
+        let next = process_event(&state, &InputEvent::MouseButtonDown { x: -1920, y: -1080 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (-1920, -1080), current: (-1920, -1080) }
+        );
+        let next = process_event(&next, &InputEvent::MouseMove { x: -100, y: -200 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (-1920, -1080), current: (-100, -200) }
+        );
+    }
+
+    #[test]
+    fn drawing_with_i32_boundary_values() {
+        let state = AppState { drawing: DrawingState::Armed };
+        let next = process_event(&state, &InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (i32::MAX, i32::MIN), current: (i32::MAX, i32::MIN) }
+        );
+        let next = process_event(&next, &InputEvent::MouseMove { x: i32::MIN, y: i32::MAX });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (i32::MAX, i32::MIN), current: (i32::MIN, i32::MAX) }
+        );
+    }
+
+    #[test]
+    fn drawing_at_origin() {
+        let state = AppState { drawing: DrawingState::Armed };
+        let next = process_event(&state, &InputEvent::MouseButtonDown { x: 0, y: 0 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (0, 0), current: (0, 0) }
+        );
+        let next = process_event(&next, &InputEvent::MouseMove { x: 0, y: 0 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (0, 0), current: (0, 0) }
+        );
+    }
+
+    #[test]
+    fn drawing_zero_size_mouse_up_returns_to_armed() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (100, 200), current: (100, 200) },
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    // --- Multi-event sequences ---
+
+    #[test]
+    fn multiple_mouse_moves_preserve_start() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (10, 20) },
+        };
+        let next = process_event(&state, &InputEvent::MouseMove { x: 30, y: 40 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (10, 20), current: (30, 40) }
+        );
+        let next = process_event(&next, &InputEvent::MouseMove { x: 60, y: 80 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (10, 20), current: (60, 80) }
+        );
+        let next = process_event(&next, &InputEvent::MouseMove { x: 5, y: 5 });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing { start: (10, 20), current: (5, 5) }
+        );
+    }
+
+    #[test]
+    fn full_draw_lifecycle() {
+        let mut state = AppState { drawing: DrawingState::Idle };
+
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        assert_eq!(state.drawing, DrawingState::Armed);
+
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
+        assert_eq!(state.drawing, DrawingState::Drawing { start: (100, 100), current: (100, 100) });
+
+        state = process_event(&state, &InputEvent::MouseMove { x: 200, y: 150 });
+        state = process_event(&state, &InputEvent::MouseMove { x: 300, y: 250 });
+        assert_eq!(state.drawing, DrawingState::Drawing { start: (100, 100), current: (300, 250) });
+
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 300, y: 250 });
+        assert_eq!(state.drawing, DrawingState::Armed);
+
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert_eq!(state.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn modifier_repress_after_release() {
+        let mut state = AppState { drawing: DrawingState::Idle };
+
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        assert_eq!(state.drawing, DrawingState::Armed);
+
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert_eq!(state.drawing, DrawingState::Idle);
+
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        assert_eq!(state.drawing, DrawingState::Armed);
+    }
+
+    // --- Trait coverage ---
+
+    #[test]
+    fn default_app_state_is_idle() {
+        let state = AppState::default();
+        assert_eq!(state.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn app_state_clone_independence() {
+        let original = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (30, 40) },
+        };
+        let mut cloned = original.clone();
+        cloned.drawing = DrawingState::Idle;
+        assert_eq!(original.drawing, DrawingState::Drawing { start: (10, 20), current: (30, 40) });
+        assert_eq!(cloned.drawing, DrawingState::Idle);
+    }
 }

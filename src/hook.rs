@@ -115,7 +115,7 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 // Pure decision function — no Win32 side effects, fully unit-testable
-fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32]) -> Option<InputEvent> {
+pub(crate) fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32]) -> Option<InputEvent> {
     if !modifier_codes.contains(&vk_code) {
         return None;
     }
@@ -128,7 +128,7 @@ fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32]) -> O
 /// Suppression policy: only suppress button events (LButtonDown, LButtonUp).
 /// Mouse moves pass through so the cursor stays responsive — the overlay
 /// tracks position via the channel regardless.
-fn decide_mouse(
+pub(crate) fn decide_mouse(
     msg: u32,
     pt: (i32, i32),
     should_suppress: bool,
@@ -385,5 +385,166 @@ mod tests {
     fn alt_key_not_detected_with_ctrl_config() {
         let codes = vec![0x11, 0xA2, 0xA3]; // Ctrl config
         assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes), None);
+    }
+
+    // -- decide_keyboard edge cases --
+
+    #[test]
+    fn decide_keyboard_empty_modifier_codes_returns_none() {
+        let codes: Vec<u32> = vec![];
+        assert_eq!(decide_keyboard(0x12, true, &codes), None);
+    }
+
+    #[test]
+    fn decide_keyboard_zero_vk_code_not_in_codes() {
+        let codes = vec![0x12, 0xA4, 0xA5];
+        assert_eq!(decide_keyboard(0, true, &codes), None);
+    }
+
+    #[test]
+    fn decide_keyboard_zero_vk_code_in_codes() {
+        let codes = vec![0, 0x12];
+        assert_eq!(decide_keyboard(0, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn decide_keyboard_max_u32_not_in_codes() {
+        let codes = vec![0x12, 0xA4, 0xA5];
+        assert_eq!(decide_keyboard(u32::MAX, true, &codes), None);
+    }
+
+    // -- decide_mouse edge cases --
+
+    #[test]
+    fn mouse_drag_in_progress_with_suppress_flag_true_move_still_passes_through() {
+        // Even if suppress=true externally, drag move should pass through
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (300, 400), true, true, true);
+        assert_eq!(event, Some(InputEvent::MouseMove { x: 300, y: 400 }));
+        assert!(!suppress, "MouseMove must pass through during drag regardless of suppress state");
+    }
+
+    #[test]
+    fn mouse_lbuttondown_during_drag_is_noop() {
+        // Repeated LButtonDown while drag already in progress
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), true, true, true);
+        assert_eq!(event, None, "LButtonDown during active drag should be ignored");
+        assert!(!suppress, "LButtonDown during active drag should not suppress");
+    }
+
+    #[test]
+    fn mouse_rbuttondown_during_drag_is_noop() {
+        let (event, suppress) = decide_mouse(WM_RBUTTONDOWN, (100, 200), false, true, false);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_rbuttonup_during_drag_is_noop() {
+        let (event, suppress) = decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_mbuttondown_during_drag_is_noop() {
+        let (event, suppress) = decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_mbuttonup_during_drag_is_noop() {
+        let (event, suppress) = decide_mouse(WM_MBUTTONUP, (100, 200), false, true, false);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_unknown_message_during_drag_is_noop() {
+        // Use a non-standard WM_ message code
+        let (event, suppress) = decide_mouse(WM_MOUSEWHEEL, (100, 200), false, true, false);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_unknown_message_outside_drag_suppress_modifier_held_is_noop() {
+        // Not in drag, suppress+modifier_held both true, but message is not LBUTTONDOWN
+        let (event, suppress) = decide_mouse(WM_MOUSEWHEEL, (100, 200), true, false, true);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    #[test]
+    fn mouse_move_suppress_true_modifier_held_true_no_drag_is_noop() {
+        // Mouse move outside drag should not generate events
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (100, 200), true, false, true);
+        assert_eq!(event, None);
+        assert!(!suppress);
+    }
+
+    // -- Full sequence: multiple drags in one Alt-hold session --
+
+    #[test]
+    fn multiple_drags_in_single_alt_hold() {
+        let mut should_suppress = false;
+        let mut drag_in_progress = false;
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+
+        // Alt down
+        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes);
+        assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
+        should_suppress = true;
+
+        // Drag 1: down -> move -> up
+        let alt = true;
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (10, 10), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(suppress);
+        drag_in_progress = true;
+
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 50), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(!suppress);
+
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (50, 50), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(suppress);
+        drag_in_progress = false;
+
+        // Drag 2: down -> move -> up (Alt still held)
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (20, 20), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(suppress);
+        drag_in_progress = true;
+
+        let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (80, 80), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(!suppress);
+
+        let (event, suppress) = decide_mouse(WM_LBUTTONUP, (80, 80), should_suppress, drag_in_progress, alt);
+        assert!(event.is_some());
+        assert!(suppress);
+        drag_in_progress = false;
+
+        // Alt up
+        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes);
+        assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
+        should_suppress = false;
+
+        let _ = (&should_suppress, &drag_in_progress);
+    }
+
+    #[test]
+    fn drag_with_negative_coordinates() {
+        let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (-100, -200), true, false, true);
+        assert_eq!(event, Some(InputEvent::MouseButtonDown { x: -100, y: -200 }));
+        assert!(suppress);
+    }
+
+    #[test]
+    fn drag_move_with_max_coordinates() {
+        let (event, _) = decide_mouse(WM_MOUSEMOVE, (i32::MAX, i32::MIN), false, true, false);
+        assert_eq!(event, Some(InputEvent::MouseMove { x: i32::MAX, y: i32::MIN }));
     }
 }

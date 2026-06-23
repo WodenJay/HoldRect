@@ -20,7 +20,7 @@ struct RawConfig {
     color: Option<String>,
 }
 
-fn parse_color(s: &str) -> ColorMode {
+pub(crate) fn parse_color(s: &str) -> ColorMode {
     if s.eq_ignore_ascii_case("rainbow") {
         return ColorMode::Rainbow;
     }
@@ -37,7 +37,7 @@ fn parse_color(s: &str) -> ColorMode {
     ColorMode::Solid { r: 255, g: 0, b: 0 }
 }
 
-fn modifier_vk_codes(name: &str) -> Vec<u32> {
+pub(crate) fn modifier_vk_codes(name: &str) -> Vec<u32> {
     match name {
         "Alt" => vec![0x12, 0xA4, 0xA5],
         "Ctrl" => vec![0x11, 0xA2, 0xA3],
@@ -70,7 +70,7 @@ impl AppConfig {
         Self::parse(&content)
     }
 
-    fn parse(toml_str: &str) -> Self {
+    pub(crate) fn parse(toml_str: &str) -> Self {
         let raw: RawConfig = match toml::from_str(toml_str) {
             Ok(r) => r,
             Err(e) => {
@@ -255,5 +255,172 @@ mod tests {
         let toml_str = r#"modifier = "bogus""#;
         let cfg = AppConfig::parse(toml_str);
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
+    }
+
+    // -- parse_color edge cases --
+
+    #[test]
+    fn color_parse_empty_string_returns_default_red() {
+        assert_eq!(
+            parse_color(""),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_hash_only_returns_default_red() {
+        // "#" stripped leaves "", len 0 != 6, falls through to default
+        assert_eq!(
+            parse_color("#"),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_short_hex_3_chars_returns_default_red() {
+        // 3-char hex not supported, falls through
+        assert_eq!(
+            parse_color("F00"),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_long_hex_7_chars_returns_default_red() {
+        // 7-char hex, len != 6, falls through
+        assert_eq!(
+            parse_color("#FF00000"),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_with_hash_prefix() {
+        assert_eq!(
+            parse_color("#000000"),
+            ColorMode::Solid { r: 0, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_all_ff() {
+        assert_eq!(
+            parse_color("#FFFFFF"),
+            ColorMode::Solid { r: 255, g: 255, b: 255 }
+        );
+    }
+
+    #[test]
+    fn color_parse_hex_all_zeroes_with_hash() {
+        assert_eq!(
+            parse_color("#000000"),
+            ColorMode::Solid { r: 0, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn color_parse_rainbow_is_not_hex_prefix() {
+        // "rainbow" doesn't start with '#', strip_prefix returns None, uses full string
+        assert_eq!(parse_color("rainbow"), ColorMode::Rainbow);
+    }
+
+    #[test]
+    fn color_parse_invalid_hex_chars_returns_default_red() {
+        // "ZZZZZZ" is len 6 but from_str_radix fails
+        assert_eq!(
+            parse_color("ZZZZZZ"),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    // -- border_width boundary values --
+
+    #[test]
+    fn border_width_exactly_1() {
+        let toml_str = r#"border_width = 1"#;
+        let cfg = AppConfig::parse(toml_str);
+        assert_eq!(cfg.border_width, 1);
+    }
+
+    #[test]
+    fn border_width_exactly_20() {
+        let toml_str = r#"border_width = 20"#;
+        let cfg = AppConfig::parse(toml_str);
+        assert_eq!(cfg.border_width, 20);
+    }
+
+    #[test]
+    fn border_width_negative_clamped_to_1() {
+        let toml_str = r#"border_width = -5"#;
+        let cfg = AppConfig::parse(toml_str);
+        assert_eq!(cfg.border_width, 1);
+    }
+
+    // -- parse partial config combinations --
+
+    #[test]
+    fn parse_partial_config_only_color() {
+        let toml_str = r##"color = "#0000FF""##;
+        let cfg = AppConfig::parse(toml_str);
+        assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
+        assert_eq!(cfg.border_width, 4); // default
+        assert_eq!(cfg.color_mode, ColorMode::Solid { r: 0, g: 0, b: 255 });
+    }
+
+    #[test]
+    fn parse_partial_config_only_border_width() {
+        let toml_str = r#"border_width = 12"#;
+        let cfg = AppConfig::parse(toml_str);
+        assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
+        assert_eq!(cfg.border_width, 12);
+        assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 0 }); // default
+    }
+
+    // -- modifier_vk_codes edge cases --
+
+    #[test]
+    fn modifier_vk_codes_empty_string_defaults_to_alt() {
+        assert_eq!(modifier_vk_codes(""), vec![0x12, 0xA4, 0xA5]);
+    }
+
+    #[test]
+    fn modifier_vk_codes_case_sensitive() {
+        // "alt" (lowercase) should NOT match "Alt", falls to default
+        assert_eq!(modifier_vk_codes("alt"), vec![0x12, 0xA4, 0xA5]);
+    }
+
+    #[test]
+    fn modifier_vk_codes_ctrl_lowercase_is_default() {
+        // "ctrl" (lowercase) should fall through to default Alt
+        assert_eq!(modifier_vk_codes("ctrl"), vec![0x12, 0xA4, 0xA5]);
+    }
+
+    #[test]
+    fn color_parse_invalid_hex_chars_returns_default() {
+        assert_eq!(
+            parse_color("#ZZZZZZ"),
+            ColorMode::Solid { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn create_icon_corners_are_background() {
+        const SIZE: usize = 32;
+        const INSET: f64 = 4.0;
+        const RADIUS: f64 = 5.0;
+        let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
+        let cx = (SIZE as f64 - 1.0) / 2.0;
+        let cy = (SIZE as f64 - 1.0) / 2.0;
+        let corners = [(0usize, 0usize), (0, SIZE - 1), (SIZE - 1, 0), (SIZE - 1, SIZE - 1)];
+        for (y, x) in corners {
+            let dx = (x as f64 - cx).abs() - (half - RADIUS);
+            let dy = (y as f64 - cy).abs() - (half - RADIUS);
+            let dist = if dx > 0.0 && dy > 0.0 {
+                (dx * dx + dy * dy).sqrt()
+            } else {
+                dx.max(dy).max(0.0)
+            };
+            assert!(dist > RADIUS, "Corner ({}, {}) dist={} should be outside rounded rect", x, y, dist);
+        }
     }
 }
