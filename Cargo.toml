@@ -7,6 +7,9 @@ description = "Lightweight rubber-band highlight rectangle for screen recording"
 
 [dependencies]
 winit = "0.30"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+dirs = "6"
 
 tray-icon = "0.14"
 windows = { version = "0.58", features = [
