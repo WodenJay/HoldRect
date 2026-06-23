@@ -138,6 +138,17 @@ pub struct App {
     popup_monitor_rect: (i32, i32, i32, i32), // cached at show time
 }
 
+#[cfg(windows)]
+impl Drop for App {
+    fn drop(&mut self) {
+        if let Some(hwnd) = self.popup_hwnd {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+            }
+        }
+    }
+}
+
 impl App {
     pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode, modifier_name: String) -> Self {
         Self {
