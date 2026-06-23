@@ -85,23 +85,30 @@ rects.push(PinnedRect { x0, y0, x1, y1, spotlight: false });
 
 - [ ] **Step 5: Update all state.rs tests to use PinnedRect**
 
-Replace every tuple literal in pinned_rects with PinnedRect struct literal. Examples:
+Replace every tuple literal in pinned_rects with PinnedRect struct literal — both in `pinned_rects: vec![...]` constructions AND in `assert_eq!` comparisons. Examples:
 
 ```rust
-// Before:
+// Construction — before:
 pinned_rects: vec![(10, 20, 50, 80)]
-// After:
+// Construction — after:
 pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]
+
+// Assertion — before:
+assert_eq!(state.pinned_rects[0], (10, 10, 50, 50));
+// Assertion — after:
+assert_eq!(state.pinned_rects[0], PinnedRect { x0: 10, y0: 10, x1: 50, y1: 50, spotlight: false });
 ```
 
-Affected tests (search for `pinned_rects` in tests):
-- `drawing_mouse_up_pinned_pushes_rect` (line 451)
-- `drawing_mouse_up_pinned_normalizes_rect` (line 464)
-- `multiple_pinned_rects_accumulate` (line 489)
-- `escape_clears_pinned_rects` (line 523)
-- `escape_during_draw_cancels_and_clears_pinned` (line 535)
-- `escape_in_idle_clears_pinned_rects` (line 548)
-- `drawing_modifier_release_with_pinned_pushes_rect` (line 574)
+Add `use super::PinnedRect;` or `use crate::state::PinnedRect;` to test imports.
+
+Affected tests (search for `pinned_rects` and tuple assertions in tests):
+- `drawing_mouse_up_pinned_pushes_rect` (line 451) — construction + assertion
+- `drawing_mouse_up_pinned_normalizes_rect` (line 464) — construction + assertion
+- `multiple_pinned_rects_accumulate` (line 489) — constructions + **assert_eq! on [0] and [1]**
+- `escape_clears_pinned_rects` (line 523) — construction
+- `escape_during_draw_cancels_and_clears_pinned` (line 535) — construction
+- `escape_in_idle_clears_pinned_rects` (line 548) — construction
+- `drawing_modifier_release_with_pinned_pushes_rect` (line 574) — construction + assertion
 
 - [ ] **Step 6: Update overlay.rs render() to use struct fields**
 
@@ -169,19 +176,15 @@ fn digit_2_key_up_returns_none() {
 Run: `cargo test -j 1 --lib digit_2 2>&1 | tail -20`
 Expected: FAIL — `digit_2_modifier_held_emits_digit_pressed_2` fails (returns None instead of DigitPressed(2)).
 
-- [ ] **Step 3: Update existing test that expects digit 2 to return None**
+- [ ] **Step 3: Update existing test — REMOVE it**
 
-There is an existing test at hook.rs line ~585 (`digit_2_modifier_held_returns_none`) that asserts digit 2 returns `None`. Update it to expect `DigitPressed(2)`:
+The existing test `digit_2_modifier_held_returns_none` at hook.rs:~585 is now covered by the new test in Step 1. Remove it to avoid duplicate assertions:
 
 ```rust
-#[test]
-fn digit_2_modifier_held_returns_digit_pressed_2() {
-    let result = decide_keyboard(0x32, true, &[0x12, 0xA4, 0xA5], true);
-    assert_eq!(result, Some(InputEvent::DigitPressed(2)));
-}
+// DELETE this test entirely:
+// #[test]
+// fn digit_2_modifier_held_returns_none() { ... }
 ```
-
-(Or remove it since `digit_2_modifier_held_emits_digit_pressed_2` covers the same case.)
 
 - [ ] **Step 4: Implement digit 2 in decide_keyboard**
 
@@ -617,6 +620,29 @@ mod spotlight_tests {
     }
 
     #[test]
+    fn dim_outside_spotlights_mixed_spotlight_and_non_spotlight() {
+        let width = 20i32;
+        let height = 20i32;
+        let mut buf = vec![0u8; (width * height * 4) as usize];
+
+        // Only one spotlight rect; non-spotlight rects are not passed to dim function
+        let rects = vec![(5, 5, 10, 10)]; // spotlight rect
+        dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
+
+        // Inside spotlight rect should be clear
+        let inside_offset = (7 * width as usize + 7) * 4;
+        assert_eq!(buf[inside_offset + 3], 0, "spotlight interior should be clear");
+
+        // Outside spotlight rect should be dimmed (even where a non-spotlight rect would be)
+        let outside_offset = (0 * width as usize + 0) * 4;
+        assert_eq!(buf[outside_offset + 3], 160, "outside spotlight should be dimmed");
+
+        // Inside a non-spotlight rect area (e.g. 15,15) is also dimmed — only spotlight rects get cleared
+        let non_spotlight_interior = (15 * width as usize + 15) * 4;
+        assert_eq!(buf[non_spotlight_interior + 3], 160, "non-spotlight interior stays dimmed");
+    }
+
+    #[test]
     fn dim_outside_spotlights_overlapping_rects() {
         let width = 20i32;
         let height = 20i32;
@@ -780,12 +806,12 @@ for rect in &self.state.pinned_rects {
 }
 ```
 
-- [ ] **Step 7: Run all tests**
+- [ ] **Step 8: Run all tests**
 
 Run: `cargo test -j 1 --lib 2>&1 | tail -20`
 Expected: All pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/overlay.rs

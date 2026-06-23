@@ -40,7 +40,7 @@ Default impl updated: add `spotlight_active: false`. `PinnedRect` does not need 
 
 ### 2.3 Migration note
 
-`process_event` currently returns a 3-tuple `(drawing, pinned_active, pinned_rects)`. With `spotlight_active` added, every match arm (13+ arms) must expand to a 4-tuple. Missing any arm will silently pass through stale state. This is a pervasive mechanical change.
+`process_event` returns `AppState` (not a tuple). Internally, the match destructures into a local 3-tuple `(drawing, pinned_active, pinned_rects)` on line 51, then constructs `AppState` on line 109. With `spotlight_active` added, the internal destructuring expands to a 4-tuple and the `AppState` construction adds `spotlight_active`. Every match arm (13+ arms) must include the new field. Missing any arm will silently pass through stale state.
 
 ## 3. Hook Changes (src/hook.rs)
 
@@ -70,6 +70,8 @@ Same pattern as DigitPressed(1):
 ### 4.2 MouseUp with pinned_active
 
 Push `PinnedRect { x0, y0, x1, y1, spotlight: spotlight_active }`.
+
+**Note**: Spotlight requires pinned. If `pinned_active` is false, no rect is pushed regardless of `spotlight_active`. Spotlight-only (without pinned) is not supported — a dimmed area with no visible rect border would be confusing. The push guard remains `if state.pinned_active`.
 
 ### 4.3 Modifier release with pinned_active
 
