@@ -12,3 +12,4 @@
 - `windows` crate 0.58 中 `COLORREF` 在 `Foundation` 模块，不在 `Gdi`，需要单独 import
 - `windows` crate 0.58 中 GDI 函数（`DeleteObject`、`SelectObject`）不需要 `.into()`，类型直接实现 `Param<HGDIOBJ>`
 - `GetDC`/`ReleaseDC` 在 `windows` crate 0.58 中直接接受 `HWND`，不需要 `Some(hwnd)`
+- `f32` 对 Unix 时间戳（~1.7×10⁹）精度不足，`as_secs_f32()` 会丢失小数部分，导致 `time % 1.0 == 0.0`。彩虹动画必须用 `as_secs_f64()` + `.fract()` 取小数部分再转 `f32`
