@@ -279,11 +279,13 @@ unsafe fn create_font(size: i32, weight: u32) -> HFONT {
 }
 
 unsafe fn clear_buffer(pixels: *mut u8, width: i32, height: i32) {
+    debug_assert!(width > 0 && height > 0, "clear_buffer: width={width}, height={height}");
     let total = (width * height * 4) as usize;
     std::ptr::write_bytes(pixels, 0, total);
 }
 
 unsafe fn paint_rounded_rect(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, radius: i32, r: u8, g: u8, b: u8, a: u8) {
+    debug_assert!(x >= 0 && y >= 0, "paint_rounded_rect: x={x}, y={y}");
     for py in 0..h {
         for px in 0..w {
             let corner_alpha = rounded_corner_alpha(px, py, w, h, radius);
