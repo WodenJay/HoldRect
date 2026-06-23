@@ -76,10 +76,11 @@ unsafe extern "system" fn mouse_hook_proc(
         let ms = *(l_param.0 as *const MSLLHOOKSTRUCT);
         let msg = w_param.0 as u32;
         let pt = (ms.pt.x, ms.pt.y);
-        // VK_MENU (0x12) catches EITHER Alt key via GetAsyncKeyState,
-        // unlike VK_LMENU/VK_RMENU which are per-key. Intentional.
-        let ctrl = GetAsyncKeyState(VK_MENU.0 as i32) & 0x8000u16 as i16 != 0;
+        // SHOULD_SUPPRESS (keyboard hook) is the single source of truth for
+        // Alt-held state. GetAsyncKeyState(VK_MENU) is unreliable inside
+        // WH_MOUSE_LL callbacks in browsers/terminals.
         let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
+        let ctrl = suppress;
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
 
         let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, ctrl);
