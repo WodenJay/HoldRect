@@ -26,11 +26,14 @@
 src/popup/
     mod.rs          — PopupManager, PopupContent, PopupPhase, build_status_text()
     animation.rs    — spring_position() pure function
-    gdi_renderer.rs — GdiRenderer struct, PopupRenderer trait, GDI drawing (#[cfg(windows)])
+    gdi_renderer.rs — GdiRenderer struct, GDI drawing (#[cfg(windows)])
+
+> **ponytail: `renderer.rs` / `PopupRenderer` trait deferred.** Spec calls for it now, but YAGNI — only one renderer exists. Add trait when v0.3 actually adds a second platform. Breaking refactor at that point is ~10 min of extracting methods into a trait.
 
 Modified files:
     src/state.rs    — Add ToggleHelp, HideHelp to InputEvent enum
     src/hook.rs     — Add VK_OEM_3 detection in decide_keyboard
+    src/config.rs   — Add modifier_name field to AppConfig
     src/overlay.rs  — Add popup fields to App, wire up in about_to_wait
 ```
 
@@ -196,7 +199,7 @@ git commit -m "feat(popup): add spring animation pure function with tests"
 **Files:**
 - Modify: `src/state.rs:3-10` (InputEvent enum)
 - Modify: `src/hook.rs:122-138` (decide_keyboard)
-- Modify: `src/overlay.rs` (decide_keyboard tests section)
+- Modify: `src/hook.rs` (decide_keyboard tests section)
 
 **Interfaces:**
 - Produces: `InputEvent::ToggleHelp`, `InputEvent::HideHelp` variants
@@ -221,7 +224,7 @@ pub enum InputEvent {
 
 - [ ] **Step 2: Write failing tests for VK_OEM_3 detection**
 
-In the `decide_keyboard` tests section of `src/overlay.rs` (find the `mod missing_tests` block that contains `decide_keyboard_*` tests), add:
+In the `decide_keyboard` tests section of `src/hook.rs` (find the test module that contains `decide_keyboard_*` tests), add:
 ```rust
 #[test]
 fn modifier_held_backtick_down_emits_toggle_help() {
@@ -387,6 +390,10 @@ impl PopupManager {
     pub fn on_event(&mut self, event: &InputEvent, state: &AppState) {
         match event {
             InputEvent::DigitPressed(1) | InputEvent::DigitPressed(2) => {
+                // Cheatsheet suppresses status popup (spec: mutually exclusive)
+                if self.content == PopupContent::Cheatsheet && self.phase != PopupPhase::Hidden {
+                    return;
+                }
                 if matches!(state.drawing, crate::state::DrawingState::Armed | crate::state::DrawingState::Drawing { .. }) {
                     let text = build_status_text(state.pinned_active, state.spotlight_active);
                     self.show_status(&text);
@@ -727,6 +734,42 @@ mod tests {
         assert_eq!(m.cheatsheet_rows[0].0, "Ctrl + drag");
         assert_eq!(m.cheatsheet_rows[4].0, "Ctrl + `");
     }
+
+    // --- cheatsheet suppresses status ---
+
+    #[test]
+    fn cheatsheet_suppresses_status_popup() {
+        let mut m = make_manager();
+        let state = armed_state();
+        m.on_event(&InputEvent::ToggleHelp, &state);
+        assert_eq!(m.content, PopupContent::Cheatsheet);
+        // DigitPressed should NOT replace cheatsheet with status
+        m.on_event(&InputEvent::DigitPressed(1), &state);
+        assert_eq!(m.content, PopupContent::Cheatsheet);
+    }
+
+    // --- on_event with HideHelp ---
+
+    #[test]
+    fn on_hide_help_hides_cheatsheet() {
+        let mut m = make_manager();
+        let state = armed_state();
+        m.on_event(&InputEvent::ToggleHelp, &state);
+        assert!(m.needs_frame());
+        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() };
+        m.on_event(&InputEvent::HideHelp, &state);
+        assert!(matches!(m.phase, PopupPhase::SlidingOut { .. }));
+    }
+
+    // --- on_event digit while idle is noop ---
+
+    #[test]
+    fn on_digit_pressed_idle_is_noop() {
+        let mut m = make_manager();
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        m.on_event(&InputEvent::DigitPressed(1), &state);
+        assert_eq!(m.phase, PopupPhase::Hidden);
+    }
 }
 ```
 
@@ -790,7 +833,7 @@ pub struct GdiRenderer {
     hwnd: HWND,
     mem_dc: HDC,
     mem_bitmap: HBITMAP,
-    old_bitmap: HBITMAP,
+    original_stock_bitmap: HBITMAP,  // never deleted — restored in Drop
     font_normal: HFONT,
     font_key: HFONT,
     font_desc: HFONT,
@@ -799,12 +842,10 @@ pub struct GdiRenderer {
     pixels: *mut u8,
 }
 
-unsafe impl Send for GdiRenderer {}
-
 impl GdiRenderer {
     pub fn new(hwnd: HWND) -> Self {
         unsafe {
-            let screen_dc = GetDC(Some(hwnd));
+            let screen_dc = GetDC(HWND::default()); // screen DC, not window DC
             let mem_dc = CreateCompatibleDC(Some(screen_dc));
 
             // Initial size — will be resized on first render
@@ -825,21 +866,21 @@ impl GdiRenderer {
             };
 
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let mem_bitmap = CreateDIBSection(Some(mem_dc), &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
+            let mem_bitmap = CreateDIBSection(Some(screen_dc), &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
                 .expect("CreateDIBSection failed");
-            let old_bitmap = SelectObject(mem_dc, mem_bitmap.into());
+            let original_stock_bitmap = SelectObject(mem_dc, mem_bitmap.into());
 
             let font_normal = create_font(14, FW_MEDIUM);
             let font_key = create_font(13, FW_SEMIBOLD);
             let font_desc = create_font(13, FW_NORMAL);
 
-            ReleaseDC(Some(hwnd), screen_dc);
+            ReleaseDC(HWND::default(), screen_dc);
 
             Self {
                 hwnd,
                 mem_dc,
                 mem_bitmap,
-                old_bitmap,
+                original_stock_bitmap,
                 font_normal,
                 font_key,
                 font_desc,
@@ -855,10 +896,11 @@ impl GdiRenderer {
             return;
         }
         unsafe {
-            SelectObject(self.mem_dc, self.old_bitmap);
+            // Deselect current bitmap before deleting
+            SelectObject(self.mem_dc, self.original_stock_bitmap);
             DeleteObject(self.mem_bitmap.into());
 
-            let screen_dc = GetDC(Some(self.hwnd));
+            let screen_dc = GetDC(HWND::default());
             let mut bi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -874,12 +916,13 @@ impl GdiRenderer {
             let mut pixels: *mut u8 = std::ptr::null_mut();
             let mem_bitmap = CreateDIBSection(Some(screen_dc), &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
                 .expect("CreateDIBSection failed");
-            self.old_bitmap = SelectObject(self.mem_dc, mem_bitmap.into());
+            // Select new bitmap — don't update original_stock_bitmap
+            SelectObject(self.mem_dc, mem_bitmap.into());
             self.mem_bitmap = mem_bitmap;
             self.pixels = pixels;
             self.current_width = width;
             self.current_height = height;
-            ReleaseDC(Some(self.hwnd), screen_dc);
+            ReleaseDC(HWND::default(), screen_dc);
         }
     }
 
@@ -930,7 +973,7 @@ impl GdiRenderer {
             // Text
             SelectObject(self.mem_dc, self.font_normal.into());
             SetBkMode(self.mem_dc, TRANSPARENT);
-            SetTextColor(self.mem_dc, COLORREF::from_rgb(255, 255, 255));
+            SetTextColor(self.mem_dc, COLORREF(0x00FFFFFF)); // white
             let text_rect = RECT {
                 left: card_x + STATUS_PADDING_H,
                 top: card_y,
@@ -946,7 +989,7 @@ impl GdiRenderer {
             ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, buf_w, buf_h, SWP_NOACTIVATE);
 
-            commit_layered(self.hwnd, self.mem_dc, self.mem_bitmap, buf_w, buf_h);
+            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
         }
     }
 
@@ -980,7 +1023,7 @@ impl GdiRenderer {
                 // Key (left-aligned, semibold)
                 SelectObject(self.mem_dc, self.font_key.into());
                 SetBkMode(self.mem_dc, TRANSPARENT);
-                SetTextColor(self.mem_dc, COLORREF::from_rgb(229, 229, 229)); // #E5E5E5
+                SetTextColor(self.mem_dc, COLORREF(0x00E5E5E5)); // #E5E5E5
                 let key_rect = RECT {
                     left: card_x + CHEATSHEET_PADDING_H,
                     top: row_y,
@@ -992,7 +1035,7 @@ impl GdiRenderer {
 
                 // Desc (right-aligned, regular)
                 SelectObject(self.mem_dc, self.font_desc.into());
-                SetTextColor(self.mem_dc, COLORREF::from_rgb(174, 174, 178)); // #AEAEB2
+                SetTextColor(self.mem_dc, COLORREF(0x00AEAEB2)); // #AEAEB2
                 let desc_rect = RECT {
                     left: card_x + popup_w / 2,
                     top: row_y,
@@ -1010,7 +1053,7 @@ impl GdiRenderer {
             ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, buf_w, buf_h, SWP_NOACTIVATE);
 
-            commit_layered(self.hwnd, self.mem_dc, self.mem_bitmap, buf_w, buf_h);
+            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
         }
     }
 }
@@ -1018,7 +1061,7 @@ impl GdiRenderer {
 impl Drop for GdiRenderer {
     fn drop(&mut self) {
         unsafe {
-            SelectObject(self.mem_dc, self.old_bitmap);
+            SelectObject(self.mem_dc, self.original_stock_bitmap);
             DeleteObject(self.mem_bitmap.into());
             DeleteDC(self.mem_dc);
             DeleteObject(self.font_normal.into());
@@ -1061,8 +1104,13 @@ unsafe fn paint_rounded_rect(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y:
     }
 }
 
-unsafe fn paint_shadow(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, radius: i32, color: (u8, u8, u8), alpha: u8) {
-    paint_rounded_rect(pixels, buf_w, buf_h, x, y, w, h, radius, color.0, color.1, color.2, alpha);
+unsafe fn paint_shadow(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, radius: i32, color: (u8, u8, u8), base_alpha: u8) {
+    // Layered shadow: 3 layers at increasing offsets and decreasing alpha
+    for i in 0..3 {
+        let offset = (i + 1) as i32;
+        let alpha = (base_alpha as u32 * (3 - i) as u32 / 3) as u8;
+        paint_rounded_rect(pixels, buf_w, buf_h, x + offset, y + offset, w, h, radius + offset, color.0, color.1, color.2, alpha);
+    }
 }
 
 fn rounded_corner_alpha(px: i32, py: i32, w: i32, h: i32, radius: i32) -> f32 {
@@ -1100,11 +1148,8 @@ unsafe fn blend_pixel(dst: *mut u8, r: u8, g: u8, b: u8, a: u8) {
     *dst.add(3) = (a as f32 + *dst.add(3) as f32 * inv).min(255.0) as u8; // A
 }
 
-unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, mem_bitmap: HBITMAP, width: i32, height: i32) {
-    // UpdateLayeredWindow needs an HDC with the DIB selected
-    let src_dc = CreateCompatibleDC(Some(mem_dc));
-    let old = SelectObject(src_dc, mem_bitmap);
-
+/// Push pixels to the layered window. mem_dc already has mem_bitmap selected.
+unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32) {
     let size = SIZE { cx: width, cy: height };
     let point = POINT { x: 0, y: 0 };
     let mut blend = BLENDFUNCTION {
@@ -1118,15 +1163,12 @@ unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, mem_bitmap: HBITMAP, width: i3
         None,
         None,
         Some(&size),
-        Some(src_dc),
+        Some(mem_dc),
         Some(&point),
         COLORREF(0),
         Some(&mut blend),
         ULW_ALPHA,
     );
-
-    SelectObject(src_dc, old);
-    DeleteDC(src_dc);
 }
 
 fn measure_text_width(dc: HDC, font: HFONT, text: &str) -> i32 {
@@ -1172,7 +1214,57 @@ git commit -m "feat(popup): add GDI renderer with rounded rects and text"
 - Consumes: `PopupManager::new()`, `GdiRenderer::new()`, `PopupManager::on_event()`, `PopupManager::tick()`, `PopupManager::needs_frame()`
 - Consumes: Win32 `GetCursorPos`, `MonitorFromPoint`, `GetMonitorInfoW`
 
-- [ ] **Step 1: Add popup fields to App struct**
+- [ ] **Step 1: Add modifier_name to AppConfig**
+
+In `src/config.rs`, add `modifier_name` field to `AppConfig`:
+```rust
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppConfig {
+    pub modifier_vk_codes: Vec<u32>,
+    pub border_width: i32,
+    pub color_mode: ColorMode,
+    pub modifier_name: String,
+}
+```
+
+Update `Default` impl:
+```rust
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            modifier_vk_codes: modifier_vk_codes("Alt"),
+            border_width: 4,
+            color_mode: ColorMode::Solid { r: 255, g: 0, b: 0 },
+            modifier_name: "Alt".to_string(),
+        }
+    }
+}
+```
+
+Update `parse()` to store the name:
+```rust
+let modifier_str = raw.modifier.as_deref().unwrap_or("Alt");
+let modifier_vk_codes = modifier_vk_codes(modifier_str);
+let modifier_name = modifier_str.to_string();
+// ...
+Self {
+    modifier_vk_codes,
+    border_width,
+    color_mode,
+    modifier_name,
+}
+```
+
+Run: `cargo test --lib config -- 2>&1 | tail -10`
+Expected: all existing tests pass (update any that construct `AppConfig` directly).
+
+Commit:
+```bash
+git add src/config.rs
+git commit -m "feat(config): add modifier_name field to AppConfig"
+```
+
+- [ ] **Step 2: Add popup fields to App struct**
 
 In `src/overlay.rs`, modify the `App` struct (line 118):
 ```rust
@@ -1190,6 +1282,7 @@ pub struct App {
     popup_manager: PopupManager,
     #[cfg(windows)]
     popup_renderer: Option<GdiRenderer>,
+    popup_monitor_rect: (i32, i32, i32, i32), // cached at show time
 }
 ```
 
@@ -1200,7 +1293,7 @@ use crate::popup::PopupManager;
 use crate::popup::gdi_renderer::GdiRenderer;
 ```
 
-- [ ] **Step 2: Update App::new to initialize popup fields**
+- [ ] **Step 3: Update App::new to initialize popup fields**
 
 Modify `App::new`:
 ```rust
@@ -1218,13 +1311,14 @@ pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorM
         popup_manager: PopupManager::new(&modifier_name),
         #[cfg(windows)]
         popup_renderer: None,
+        popup_monitor_rect: (0, 0, 1920, 1080),
     }
 }
 ```
 
 Update the caller in `main.rs` that creates `App::new()` to pass the modifier name from config.
 
-- [ ] **Step 3: Create popup window in App::resumed**
+- [ ] **Step 4: Create popup window in App::resumed**
 
 Add after the overlay window creation in `resumed()`:
 ```rust
@@ -1258,7 +1352,7 @@ Add after the overlay window creation in `resumed()`:
 }
 ```
 
-- [ ] **Step 4: Wire popup into about_to_wait**
+- [ ] **Step 5: Wire popup into about_to_wait**
 
 Modify `about_to_wait` to:
 1. Route events to popup_manager
@@ -1271,9 +1365,15 @@ fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
     // Drain all pending input events
     while let Ok(event) = self.input_rx.try_recv() {
         let new_state = process_event(&self.state, &event);
+        let was_hidden = !self.popup_manager.needs_frame();
         self.state = new_state;
         // Route to popup manager
         self.popup_manager.on_event(&event, &self.state);
+        // Cache monitor rect when popup transitions from Hidden -> visible
+        if was_hidden && self.popup_manager.needs_frame() {
+            #[cfg(windows)]
+            { self.popup_monitor_rect = get_cursor_monitor_work_area(); }
+        }
     }
 
     self.render();
@@ -1282,15 +1382,14 @@ fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
     if self.popup_manager.needs_frame() {
         self.popup_manager.tick();
         #[cfg(windows)]
-        if let (Some(renderer), Some(hwnd)) = (self.popup_renderer.as_mut(), self.popup_hwnd) {
-            let monitor_rect = get_cursor_monitor_work_area();
-            renderer.render(&self.popup_manager, monitor_rect);
+        if let (Some(renderer), Some(_hwnd)) = (self.popup_renderer.as_mut(), self.popup_hwnd) {
+            renderer.render(&self.popup_manager, self.popup_monitor_rect);
         }
     }
 
     let needs_animation = matches!(&self.state.drawing, DrawingState::Drawing { .. })
         || !self.state.pinned_rects.is_empty()
-        || self.popup_manager.needs_frame();
+        || self.popup_manager.needs_frame(); // keep event loop alive for popup animation
 
     if needs_animation {
         event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -1321,18 +1420,14 @@ fn get_cursor_monitor_work_area() -> (i32, i32, i32, i32) {
 }
 ```
 
-- [ ] **Step 5: Update main.rs caller**
+- [ ] **Step 6: Update main.rs caller**
 
-Find where `App::new(...)` is called in `main.rs` and pass the modifier name:
+Find where `App::new(...)` is called in `main.rs` and pass the modifier name from the config:
 ```rust
-let modifier_name = raw_config.general.as_ref()
-    .and_then(|g| g.modifier.as_deref())
-    .unwrap_or("Alt")
-    .to_string();
-let mut app = App::new(input_rx, border_width, color_mode, modifier_name);
+let mut app = App::new(input_rx, border_width, color_mode, config.modifier_name.clone());
 ```
 
-- [ ] **Step 6: Build and test**
+- [ ] **Step 7: Build and test**
 
 Run: `cargo build 2>&1 | head -30`
 Expected: compiles successfully
@@ -1340,10 +1435,10 @@ Expected: compiles successfully
 Run: `cargo test --lib 2>&1 | tail -20`
 Expected: all tests pass
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/overlay.rs src/main.rs src/popup/mod.rs
+git add src/overlay.rs src/main.rs src/popup/mod.rs src/config.rs
 git commit -m "feat(popup): wire popup system into App event loop"
 ```
 
