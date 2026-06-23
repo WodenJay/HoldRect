@@ -2,6 +2,8 @@
 
 > 数字键 `1` toggle pinned 模式, 松手后框冻结在屏幕上, 多框共存, Esc 清除所有。
 
+**Scope:** 仅 Pinned mode (digit key `1`). Spotlight (digit key `2`), 状态提示弹窗, 快捷键说明书, 托盘菜单增强 — 各自单独设计迭代。
+
 ---
 
 ## 1. State Machine (state.rs)
@@ -14,7 +16,7 @@ pub enum InputEvent {
     MouseButtonDown { x: i32, y: i32 },
     MouseButtonUp { x: i32, y: i32 },
     MouseMove { x: i32, y: i32 },
-    DigitPressed(u8),       // digit key 1-9, only when modifier held
+    DigitPressed(u8),       // digit key pressed while modifier held (currently only `1`)
     EscapePressed,           // Esc key
 }
 ```
@@ -25,23 +27,31 @@ pub enum InputEvent {
 pub struct AppState {
     pub drawing: DrawingState,
     pub pinned_rects: Vec<(i32, i32, i32, i32)>,  // normalized (x0, y0, x1, y1)
-    pub pinned_active: bool,  // per-gesture toggle, reset on modifier release
+    pub pinned_active: bool,  // per-rect toggle, reset after MouseUp (PRD: "画新框时重置")
 }
 ```
 
 ### State Transitions
 
+`DigitPressed(1)` toggles `pinned_active` when modifier is held (i.e. in Armed or Drawing state — both imply modifier held; Idle does not). Only key `1` is handled; other digit keys are ignored.
+
 | Current State | Event | pinned_active | Action |
 |---|---|---|---|
-| Any (modifier held) | `DigitPressed(1)` | toggle | flip `pinned_active` |
-| Drawing | `MouseButtonUp` | true | push normalized rect to `pinned_rects`, → Armed |
+| Armed (modifier held) | `DigitPressed(1)` | toggle | flip `pinned_active` |
+| Drawing (modifier held) | `DigitPressed(1)` | toggle | flip `pinned_active` |
+| Drawing | `MouseButtonUp` | true | push normalized rect to `pinned_rects`, → Armed, **`pinned_active = false`** |
 | Drawing | `MouseButtonUp` | false | → Armed (existing behavior, rect disappears) |
+| Drawing | `EscapePressed` | any | → Armed, current rect discarded, **`pinned_active = false`** |
 | Drawing | `ModifierChanged { pressed: false }` | true | push rect to `pinned_rects`, → Idle, `pinned_active = false` |
 | Drawing | `ModifierChanged { pressed: false }` | false | → Idle (existing behavior) |
 | Armed | `ModifierChanged { pressed: false }` | any | → Idle, `pinned_active = false` |
-| Any | `EscapePressed` | - | `pinned_rects.clear()`, no state change |
+| Armed | `EscapePressed` | - | `pinned_rects.clear()`, no state change |
+| Idle | `EscapePressed` | - | `pinned_rects.clear()`, no state change |
 
-**Key invariant:** `pinned_active` resets to `false` on modifier release. `pinned_rects` persists until Esc.
+**Key invariants:**
+- `pinned_active` resets to `false` after each `MouseButtonUp` (per-rect, as PRD requires "画新框时数字键状态重置为默认")
+- `pinned_active` also resets on modifier release (safety net)
+- `pinned_rects` persists until `EscapePressed`
 
 ---
 
@@ -63,10 +73,12 @@ pub(crate) fn decide_keyboard(
 ```
 1. If vk_code in modifier_codes → ModifierChanged (existing)
 2. If is_key_down AND modifier_held:
-   a. vk_code in 0x31..0x39 → DigitPressed(vk_code - 0x30)
+   a. vk_code == 0x31 (VK_1) → DigitPressed(1)
    b. vk_code == VK_ESCAPE → EscapePressed
 3. Otherwise → None
 ```
+
+Only digit `1` is handled now. When Spotlight (digit `2`) is added in a later iteration, extend step 2a.
 
 ### Call Site Change
 
@@ -167,6 +179,6 @@ fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 
 ## 5. Testing Strategy
 
-- **state.rs**: Unit tests for all new transitions (DigitPressed toggle, pinned on mouse up, modifier release reset, Esc clear, multi-rect accumulate).
-- **hook.rs**: Unit tests for `decide_keyboard` with digit/Esc + modifier_held combinations.
+- **state.rs**: Unit tests for all new transitions (DigitPressed toggle in Armed/Drawing, pinned on mouse up + reset, modifier release reset, Esc cancel draw, Esc clear pinned_rects, multi-rect accumulate, per-rect reset between consecutive draws).
+- **hook.rs**: Unit tests for `decide_keyboard` with digit `1` + Esc + modifier_held combinations, other digit keys ignored.
 - **overlay.rs**: `hsv_to_rgb` and `perimeter_position` already tested. DIB functions are Win32-coupled — manual verification.
