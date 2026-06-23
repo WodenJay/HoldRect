@@ -1,6 +1,8 @@
 #![windows_subsystem = "windows"]
 
 mod config;
+#[cfg(windows)]
+mod autostart;
 mod state;
 mod overlay;
 mod tray;
