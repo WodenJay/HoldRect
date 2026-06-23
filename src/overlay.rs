@@ -17,8 +17,6 @@ use crate::state::InputEvent;
 use crate::state::process_event;
 
 const BORDER_WIDTH: i32 = 4;
-// GDI uses COLORREF: 0x00BBGGRR
-const BORDER_COLOR_GDI: u32 = 0x000000FF; // Red in GDI format
 
 pub struct App {
     window: Option<Window>,
@@ -94,11 +92,10 @@ impl ApplicationHandler for App {
         match &self.state.drawing {
             DrawingState::Drawing { start, current } => {
                 if let Some(window) = &self.window {
-                    window.set_visible(true);
-                    #[cfg(windows)]
-                    show_window_topmost(window);
                     #[cfg(windows)]
                     draw_border(window, *start, *current);
+                    #[cfg(windows)]
+                    show_window_topmost(window);
                 }
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     std::time::Instant::now() + std::time::Duration::from_millis(16),
@@ -122,7 +119,10 @@ impl App {
         let DrawingState::Drawing { start, current } = &self.state.drawing else { return; };
 
         #[cfg(windows)]
-        draw_border(window, *start, *current);
+        {
+            draw_border(window, *start, *current);
+            show_window_topmost(window);
+        }
     }
 }
 
@@ -192,26 +192,33 @@ fn show_window_topmost(window: &Window) {
 }
 
 /// Draw border rectangle using UpdateLayeredWindow with per-pixel alpha.
-/// Background is fully transparent (alpha=0), border pixels have alpha=0xFF.
+/// Background is fully transparent (alpha=0), border pixels are opaque red.
 #[cfg(windows)]
 fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
-    use windows::Win32::Foundation::{COLORREF, POINT, RECT, SIZE};
+    use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     let hwnd = get_hwnd(window);
+
     unsafe {
         let mut wr = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut wr);
-        let w = wr.right - wr.left;
-        let h = wr.bottom - wr.top;
-        if w <= 0 || h <= 0 { return; }
+        if GetWindowRect(hwnd, &mut wr).is_err() {
+            return;
+        }
 
-        let bi = BITMAPINFO {
+        let width = wr.right - wr.left;
+        let height = wr.bottom - wr.top;
+
+        if width <= 0 || height <= 0 {
+            return;
+        }
+
+        let bitmap_info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: w,
-                biHeight: -h, // negative = top-down
+                biWidth: width,
+                biHeight: -height,
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0 as u32,
@@ -219,72 +226,119 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32)) {
             },
             ..Default::default()
         };
-        let mut bits: *mut u8 = std::ptr::null_mut();
-        let hbmp = CreateDIBSection(None, &bi, DIB_RGB_COLORS,
-            &mut bits as *mut *mut u8 as _, None, 0)
-            .expect("CreateDIBSection failed");
 
-        let hdc = GetDC(hwnd);
-        let mem_dc = CreateCompatibleDC(hdc);
-        let old_bmp = SelectObject(mem_dc, hbmp);
+        let mut pixels: *mut u8 = std::ptr::null_mut();
 
-        // Zero the DIB — all pixels fully transparent (BGRA 0,0,0,0)
-        std::ptr::write_bytes(bits, 0, (w as usize) * (h as usize) * 4);
+        let bitmap = match CreateDIBSection(
+            None,
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut pixels as *mut *mut u8 as _,
+            None,
+            0,
+        ) {
+            Ok(bitmap) => bitmap,
+            Err(_) => return,
+        };
 
-        // Draw red border with GDI
-        let (x0, y0, x1, y1) = normalize_rect(start, current);
-        let x0 = x0 - wr.left;
-        let y0 = y0 - wr.top;
-        let x1 = x1 - wr.left;
-        let y1 = y1 - wr.top;
+        if pixels.is_null() {
+            let _ = DeleteObject(bitmap);
+            return;
+        }
 
-        let pen = CreatePen(PS_SOLID, BORDER_WIDTH, COLORREF(BORDER_COLOR_GDI));
-        let old_pen = SelectObject(mem_dc, pen);
-        let null_brush = GetStockObject(NULL_BRUSH);
-        let old_brush = SelectObject(mem_dc, null_brush);
-        let _ = Rectangle(mem_dc, x0, y0, x1, y1);
+        let screen_dc = GetDC(HWND::default());
+        let memory_dc = CreateCompatibleDC(screen_dc);
+        let old_bitmap = SelectObject(memory_dc, bitmap);
 
-        // Fix alpha: GDI sets RGB only, alpha stays 0x00 (transparent to DWM).
-        // Set alpha=0xFF on red border pixels so DWM renders them opaque.
-        // BORDER_COLOR_GDI = 0x000000FF → BGRA: B=0x00, G=0x00, R=0xFF
-        let row_bytes = w as usize * 4;
-        for y in 0..h as usize {
-            let row = bits.add(y * row_bytes);
-            for x in 0..w as usize {
-                let px = row.add(x * 4);
-                if *px.add(0) == 0x00 && *px.add(1) == 0x00 && *px.add(2) == 0xFF {
-                    *px.add(3) = 0xFF; // alpha = opaque
+        // Entire window fully transparent
+        std::ptr::write_bytes(
+            pixels,
+            0,
+            width as usize * height as usize * 4,
+        );
+
+        let (global_x0, global_y0, global_x1, global_y1) =
+            normalize_rect(start, current);
+
+        let x0 = (global_x0 - wr.left).clamp(0, width - 1);
+        let y0 = (global_y0 - wr.top).clamp(0, height - 1);
+        let x1 = (global_x1 - wr.left).clamp(0, width - 1);
+        let y1 = (global_y1 - wr.top).clamp(0, height - 1);
+
+        let stride = width as usize * 4;
+
+        let set_red_pixel = |x: i32, y: i32| {
+            if x < 0 || x >= width || y < 0 || y >= height {
+                return;
+            }
+
+            let pixel = pixels.add(y as usize * stride + x as usize * 4);
+
+            // BGRA — alpha must be 255
+            *pixel.add(0) = 0;
+            *pixel.add(1) = 0;
+            *pixel.add(2) = 255;
+            *pixel.add(3) = 255;
+        };
+
+        if x1 > x0 && y1 > y0 {
+            for offset in 0..BORDER_WIDTH {
+                let top = y0 + offset;
+                let bottom = y1 - offset;
+                let left = x0 + offset;
+                let right = x1 - offset;
+
+                for x in left..=right {
+                    set_red_pixel(x, top);
+                    set_red_pixel(x, bottom);
+                }
+
+                for y in top..=bottom {
+                    set_red_pixel(left, y);
+                    set_red_pixel(right, y);
                 }
             }
         }
 
-        // UpdateLayeredWindow: per-pixel alpha compositing (replaces BitBlt + LWA_COLORKEY)
+        let destination = POINT {
+            x: wr.left,
+            y: wr.top,
+        };
+
+        let source = POINT { x: 0, y: 0 };
+
+        let size = SIZE {
+            cx: width,
+            cy: height,
+        };
+
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
             SourceConstantAlpha: 255,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
-        let _ = UpdateLayeredWindow(
+
+        let result = UpdateLayeredWindow(
             hwnd,
-            None,
-            Some(&POINT { x: wr.left, y: wr.top }),
-            Some(&SIZE { cx: w, cy: h }),
-            mem_dc,
-            Some(&POINT { x: 0, y: 0 }),
+            screen_dc,
+            Some(&destination),
+            Some(&size),
+            memory_dc,
+            Some(&source),
             COLORREF(0),
             Some(&blend),
             ULW_ALPHA,
         );
 
-        // Cleanup
-        SelectObject(mem_dc, old_pen);
-        SelectObject(mem_dc, old_brush);
-        SelectObject(mem_dc, old_bmp);
-        let _ = DeleteObject(pen);
-        let _ = DeleteObject(hbmp);
-        let _ = ReleaseDC(hwnd, hdc);
-        let _ = DeleteDC(mem_dc);
+        if let Err(error) = result {
+            eprintln!("UpdateLayeredWindow failed: {error:?}");
+        }
+
+        SelectObject(memory_dc, old_bitmap);
+        let _ = DeleteObject(bitmap);
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(HWND::default(), screen_dc);
     }
 }
 
