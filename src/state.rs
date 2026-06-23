@@ -5,6 +5,8 @@ pub enum InputEvent {
     MouseButtonDown { x: i32, y: i32 },
     MouseButtonUp { x: i32, y: i32 },
     MouseMove { x: i32, y: i32 },
+    DigitPressed(u8),
+    EscapePressed,
 }
 
 /// Drawing states
