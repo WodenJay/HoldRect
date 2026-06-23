@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub modifier_vk_codes: Vec<u32>,
     pub border_width: i32,
     pub color_mode: ColorMode,
+    pub modifier_name: String,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +54,7 @@ impl Default for AppConfig {
             modifier_vk_codes: modifier_vk_codes("Alt"),
             border_width: 4,
             color_mode: ColorMode::Solid { r: 255, g: 0, b: 0 },
+            modifier_name: "Alt".to_string(),
         }
     }
 }
@@ -81,6 +83,7 @@ impl AppConfig {
 
         let modifier_str = raw.modifier.as_deref().unwrap_or("Alt");
         let modifier_vk_codes = modifier_vk_codes(modifier_str);
+        let modifier_name = modifier_str.to_string();
         let border_width = raw.border_width.unwrap_or(4).clamp(1, 20);
         let color_mode = match raw.color.as_deref() {
             Some(s) => parse_color(s),
@@ -91,6 +94,7 @@ impl AppConfig {
             modifier_vk_codes,
             border_width,
             color_mode,
+            modifier_name,
         }
     }
 }
