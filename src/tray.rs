@@ -46,7 +46,7 @@ fn create_icon() -> Icon {
     const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
     const SIZE: u32 = 32;
     const BG: [u8; 3] = [0xF0, 0xED, 0xEB]; // off-white background color
-    const BG_THRESHOLD: u8 = 20; // color distance tolerance
+    const BG_THRESHOLD: u16 = 20; // color distance tolerance
 
     let img = image::load_from_memory(PNG_DATA)
         .expect("Failed to decode embedded PNG");
@@ -57,9 +57,9 @@ fn create_icon() -> Icon {
     let pixels: Vec<u8> = rgba.into_raw()
         .chunks(4)
         .flat_map(|p| {
-            let dist = ((p[0] as i16 - BG[0] as i16).unsigned_abs()
+            let dist = (p[0] as i16 - BG[0] as i16).unsigned_abs()
                 + (p[1] as i16 - BG[1] as i16).unsigned_abs()
-                + (p[2] as i16 - BG[2] as i16).unsigned_abs()) as u8;
+                + (p[2] as i16 - BG[2] as i16).unsigned_abs();
             if dist < BG_THRESHOLD {
                 [p[0], p[1], p[2], 0] // transparent
             } else {
@@ -108,9 +108,9 @@ mod tests {
         let raw = rgba.into_raw();
         // At least some pixels should be near the off-white background
         let bg_count = raw.chunks(4).filter(|p| {
-            let dist = ((p[0] as i16 - 0xF0).unsigned_abs()
+            let dist = (p[0] as i16 - 0xF0).unsigned_abs()
                 + (p[1] as i16 - 0xED).unsigned_abs()
-                + (p[2] as i16 - 0xEB).unsigned_abs()) as u8;
+                + (p[2] as i16 - 0xEB).unsigned_abs();
             dist < 20
         }).count();
         assert!(bg_count > 0, "Should detect background pixels in source image");
@@ -121,5 +121,56 @@ mod tests {
         let (tx, rx) = mpsc::channel::<AppExit>();
         tx.send(AppExit).unwrap();
         assert!(rx.recv().is_ok(), "Should receive AppExit from channel");
+    }
+
+    #[test]
+    fn debug_icon_output() {
+        use image::RgbaImage;
+
+        const PNG_DATA: &[u8] = include_bytes!("../asserts/HoldRect.png");
+        const SIZE: u32 = 32;
+        const BG: [u8; 3] = [0xF0, 0xED, 0xEB];
+        const BG_THRESHOLD: u16 = 20;
+
+        let img = image::load_from_memory(PNG_DATA)
+            .expect("Failed to decode embedded PNG");
+        let rgba = img.resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+
+        let pixels: Vec<u8> = rgba.into_raw()
+            .chunks(4)
+            .flat_map(|p| {
+                let dist = (p[0] as i16 - BG[0] as i16).unsigned_abs()
+                    + (p[1] as i16 - BG[1] as i16).unsigned_abs()
+                    + (p[2] as i16 - BG[2] as i16).unsigned_abs();
+                if dist < BG_THRESHOLD {
+                    [p[0], p[1], p[2], 0]
+                } else {
+                    [p[0], p[1], p[2], p[3]]
+                }
+            })
+            .collect();
+
+        // Save to disk for visual inspection
+        let out_img = RgbaImage::from_raw(SIZE, SIZE, pixels.clone())
+            .expect("Failed to build RgbaImage");
+        std::fs::create_dir_all("asserts").unwrap();
+        out_img.save("asserts/debug_icon.png").expect("Failed to save debug icon PNG");
+
+        // Print stats
+        let total = (SIZE * SIZE) as usize;
+        let transparent = pixels.chunks(4).filter(|p| p[3] == 0).count();
+        let opaque = total - transparent;
+        println!("\n=== debug_icon_output ===");
+        println!("Total pixels: {total}");
+        println!("Transparent (alpha=0): {transparent}");
+        println!("Opaque (alpha>0): {opaque}");
+        println!("First 4 pixels RGBA:");
+        for (i, chunk) in pixels.chunks(4).take(4).enumerate() {
+            println!("  [{i}] R={} G={} B={} A={}", chunk[0], chunk[1], chunk[2], chunk[3]);
+        }
+        println!("========================\n");
+
+        assert!(total > 0);
     }
 }
