@@ -44,51 +44,49 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
 
 fn create_icon() -> Icon {
     const SIZE: usize = 32;
-    const RADIUS: f64 = 6.0;
-    const BORDER_W: f64 = 3.0;
+    // Rounded rect: inset ~4px from edges → ~24x24 area
+    const INSET: f64 = 4.0;
+    const RADIUS: f64 = 5.0;
+    const BORDER_W: f64 = 5.0;
     // Colors from the HoldRect logo
-    const RED: [u8; 4] = [0xE0, 0x60, 0x4A, 0xFF];
+    const RED: [u8; 4] = [0xE8, 0x5D, 0x3A, 0xFF];
     const ORANGE: [u8; 4] = [0xE8, 0xA8, 0x38, 0xFF];
-    const BLUE: [u8; 4] = [0x4A, 0x72, 0xA8, 0xFF];
-    const PURPLE: [u8; 4] = [0x7B, 0x50, 0x90, 0xFF];
-
-    const BG: [u8; 4] = [0xF0, 0xED, 0xEB, 0xFF]; // off-white background
+    const BLUE: [u8; 4] = [0x4A, 0x7D, 0xB5, 0xFF];
+    const PURPLE: [u8; 4] = [0x7B, 0x5E, 0xA7, 0xFF];
+    const BG: [u8; 4] = [0xF5, 0xE6, 0xDE, 0xFF]; // warm cream canvas
+    const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 
     let mut rgba = vec![0u8; SIZE * SIZE * 4];
-    let center = (SIZE - 1) as f64 / 2.0;
+    let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
+    let rect_cx = (SIZE as f64 - 1.0) / 2.0;
+    let rect_cy = (SIZE as f64 - 1.0) / 2.0;
 
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let fx = x as f64;
-            let fy = y as f64;
-
-            // Rounded rect distance from center
-            let dx = (fx - center).abs() - (center - RADIUS);
-            let dy = (fy - center).abs() - (center - RADIUS);
+            let off = (y * SIZE + x) * 4;
+            let dx = (x as f64 - rect_cx).abs() - (half - RADIUS);
+            let dy = (y as f64 - rect_cy).abs() - (half - RADIUS);
             let dist = if dx > 0.0 && dy > 0.0 {
                 (dx * dx + dy * dy).sqrt()
             } else {
                 dx.max(dy).max(0.0)
             };
 
-            if dist <= RADIUS {
-                let off = (y * SIZE + x) * 4;
-                if dist > RADIUS - BORDER_W {
-                    // Border: pick color by quadrant
-                    let color = if fy <= center && fx <= center {
-                        RED
-                    } else if fy <= center {
-                        ORANGE
-                    } else if fx <= center {
-                        PURPLE
-                    } else {
-                        BLUE
-                    };
-                    rgba[off..off + 4].copy_from_slice(&color);
+            if dist > RADIUS {
+                rgba[off..off + 4].copy_from_slice(&BG);
+            } else if dist > RADIUS - BORDER_W {
+                let color = if y as f64 <= rect_cy && x as f64 <= rect_cx {
+                    RED
+                } else if y as f64 <= rect_cy {
+                    ORANGE
+                } else if x as f64 <= rect_cx {
+                    PURPLE
                 } else {
-                    // Interior: off-white background
-                    rgba[off..off + 4].copy_from_slice(&BG);
-                }
+                    BLUE
+                };
+                rgba[off..off + 4].copy_from_slice(&color);
+            } else {
+                rgba[off..off + 4].copy_from_slice(&WHITE);
             }
         }
     }
@@ -116,58 +114,69 @@ mod tests {
 
     #[test]
     fn create_icon_has_border_pixels() {
-        // Replicate drawing logic and verify some pixels are opaque
         const SIZE: usize = 32;
-        let mut opaque = 0;
-        let center = (SIZE - 1) as f64 / 2.0;
+        const INSET: f64 = 4.0;
+        const RADIUS: f64 = 5.0;
+        const BORDER_W: f64 = 5.0;
+        let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
+        let cx = (SIZE as f64 - 1.0) / 2.0;
+        let cy = (SIZE as f64 - 1.0) / 2.0;
+        let mut border = 0;
+        let mut bg = 0;
+        let mut white = 0;
         for y in 0..SIZE {
             for x in 0..SIZE {
-                let dx = (x as f64 - center).abs() - (center - 6.0);
-                let dy = (y as f64 - center).abs() - (center - 6.0);
+                let dx = (x as f64 - cx).abs() - (half - RADIUS);
+                let dy = (y as f64 - cy).abs() - (half - RADIUS);
                 let dist = if dx > 0.0 && dy > 0.0 {
                     (dx * dx + dy * dy).sqrt()
                 } else {
                     dx.max(dy).max(0.0)
                 };
-                if dist <= 6.0 && dist > 3.0 {
-                    opaque += 1;
-                }
+                if dist > RADIUS { bg += 1; }
+                else if dist > RADIUS - BORDER_W { border += 1; }
+                else { white += 1; }
             }
         }
-        assert!(opaque > 0, "Rounded rect border should have visible pixels");
+        assert!(border > 0, "Border should have pixels");
+        assert!(bg > 0, "Background should have pixels");
+        assert!(white > 0, "Interior should have pixels");
     }
 
     #[test]
     fn create_icon_four_colors_present() {
-        // Verify all four quadrant colors appear in the icon
         const SIZE: usize = 32;
-        let center = (SIZE - 1) as f64 / 2.0;
+        const INSET: f64 = 4.0;
+        const RADIUS: f64 = 5.0;
+        const BORDER_W: f64 = 5.0;
+        let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
+        let cx = (SIZE as f64 - 1.0) / 2.0;
+        let cy = (SIZE as f64 - 1.0) / 2.0;
         let mut has_red = false;
         let mut has_orange = false;
         let mut has_blue = false;
         let mut has_purple = false;
-
         for y in 0..SIZE {
             for x in 0..SIZE {
-                let dx = (x as f64 - center).abs() - (center - 6.0);
-                let dy = (y as f64 - center).abs() - (center - 6.0);
+                let dx = (x as f64 - cx).abs() - (half - RADIUS);
+                let dy = (y as f64 - cy).abs() - (half - RADIUS);
                 let dist = if dx > 0.0 && dy > 0.0 {
                     (dx * dx + dy * dy).sqrt()
                 } else {
                     dx.max(dy).max(0.0)
                 };
-                if dist <= 6.0 && dist > 3.0 {
-                    if y as f64 <= center && x as f64 <= center { has_red = true; }
-                    if y as f64 <= center && x as f64 > center { has_orange = true; }
-                    if y as f64 > center && x as f64 > center { has_blue = true; }
-                    if y as f64 > center && x as f64 <= center { has_purple = true; }
+                if dist <= RADIUS && dist > RADIUS - BORDER_W {
+                    if y as f64 <= cy && x as f64 <= cx { has_red = true; }
+                    if y as f64 <= cy && x as f64 > cx { has_orange = true; }
+                    if y as f64 > cy && x as f64 > cx { has_blue = true; }
+                    if y as f64 > cy && x as f64 <= cx { has_purple = true; }
                 }
             }
         }
-        assert!(has_red, "Red (top-left) color missing");
-        assert!(has_orange, "Orange (top-right) color missing");
-        assert!(has_blue, "Blue (bottom-right) color missing");
-        assert!(has_purple, "Purple (bottom-left) color missing");
+        assert!(has_red, "Red (top-left) missing");
+        assert!(has_orange, "Orange (top-right) missing");
+        assert!(has_blue, "Blue (bottom-right) missing");
+        assert!(has_purple, "Purple (bottom-left) missing");
     }
 
     #[test]
