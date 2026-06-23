@@ -245,6 +245,23 @@ impl App {
                 .unwrap_or_default();
             let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
 
+            // Build spotlight rects list (screen coords)
+            let mut spotlight_rects: Vec<(i32, i32, i32, i32)> = self.state.pinned_rects.iter()
+                .filter(|r| r.spotlight)
+                .map(|r| (r.x0, r.y0, r.x1, r.y1))
+                .collect();
+
+            // Include active drawing rect if spotlight_active
+            if self.state.spotlight_active {
+                if let DrawingState::Drawing { start, current } = &self.state.drawing {
+                    let (x0, y0, x1, y1) = normalize_rect(*start, *current);
+                    spotlight_rects.push((x0, y0, x1, y1));
+                }
+            }
+
+            // Dim outside spotlight rects
+            dim_outside_spotlights_in_dib(cache, width, height, &spotlight_rects, wr.left, wr.top);
+
             // Draw all pinned rects
             for rect in &self.state.pinned_rects {
                 draw_rect_in_dib(cache, width, height, wr.left, wr.top,
@@ -387,6 +404,75 @@ fn ensure_dib_size(dib_cache: &mut Option<DibCache>, width: i32, height: i32) {
 fn clear_dib_pixels(cache: &mut DibCache, width: i32, height: i32) {
     unsafe {
         std::ptr::write_bytes(cache.pixels, 0, width as usize * height as usize * 4);
+    }
+}
+
+/// Dim all pixels outside the given spotlight rects.
+/// `rects` are (x0, y0, x1, y1) in screen coordinates.
+/// Interior of each rect (x0..=x1, y0..=y1) is cleared to transparent.
+fn dim_outside_spotlights(
+    buffer: &mut [u8],
+    width: i32,
+    height: i32,
+    rects: &[(i32, i32, i32, i32)],
+    win_x: i32,
+    win_y: i32,
+) {
+    if rects.is_empty() || width <= 0 || height <= 0 {
+        return;
+    }
+
+    let stride = width as usize * 4;
+    let total_pixels = width as usize * height as usize;
+
+    // Dim all pixels: BGRA = (0, 0, 0, 160)
+    for i in 0..total_pixels {
+        let off = i * 4;
+        buffer[off] = 0;     // B
+        buffer[off + 1] = 0; // G
+        buffer[off + 2] = 0; // R
+        buffer[off + 3] = 160; // A (semi-transparent)
+    }
+
+    // Clear interior of each spotlight rect to fully transparent
+    for &(sx0, sy0, sx1, sy1) in rects {
+        let x0 = (sx0 - win_x).clamp(0, width - 1);
+        let y0 = (sy0 - win_y).clamp(0, height - 1);
+        let x1 = (sx1 - win_x).clamp(0, width - 1);
+        let y1 = (sy1 - win_y).clamp(0, height - 1);
+
+        if x1 < x0 || y1 < y0 {
+            continue;
+        }
+
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let off = y as usize * stride + x as usize * 4;
+                buffer[off] = 0;
+                buffer[off + 1] = 0;
+                buffer[off + 2] = 0;
+                buffer[off + 3] = 0;
+            }
+        }
+    }
+}
+
+/// Wrapper that operates directly on DibCache (same pattern as draw_rect_in_dib).
+#[cfg(windows)]
+fn dim_outside_spotlights_in_dib(
+    cache: &mut DibCache,
+    width: i32,
+    height: i32,
+    rects: &[(i32, i32, i32, i32)],
+    win_x: i32,
+    win_y: i32,
+) {
+    unsafe {
+        let pixel_slice = std::slice::from_raw_parts_mut(
+            cache.pixels,
+            width as usize * height as usize * 4,
+        );
+        dim_outside_spotlights(pixel_slice, width, height, rects, win_x, win_y);
     }
 }
 
@@ -1442,6 +1528,101 @@ modifier = "Ctrl""#;
                 dx.max(dy).max(0.0)
             };
             assert!(dist <= RADIUS - BORDER_W, "Center pixel dist={} should be inside border (interior)", dist);
+        }
+    }
+
+    mod spotlight_tests {
+        use super::super::dim_outside_spotlights;
+
+        #[test]
+        fn dim_outside_spotlights_fills_dark_outside_rect() {
+            let width = 10i32;
+            let height = 10i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            let rects = vec![(2, 2, 7, 7)];
+            dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
+
+            let outside_offset = (0 * width as usize + 0) * 4;
+            assert_eq!(buf[outside_offset + 3], 160, "outside pixel alpha should be 160");
+            assert_eq!(buf[outside_offset], 0, "B=0");
+            assert_eq!(buf[outside_offset + 1], 0, "G=0");
+            assert_eq!(buf[outside_offset + 2], 0, "R=0");
+        }
+
+        #[test]
+        fn dim_outside_spotlights_clears_interior() {
+            let width = 10i32;
+            let height = 10i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            let rects = vec![(2, 2, 7, 7)];
+            dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
+
+            let inside_offset = (4 * width as usize + 4) * 4;
+            assert_eq!(buf[inside_offset + 3], 0, "inside pixel alpha should be 0");
+        }
+
+        #[test]
+        fn dim_outside_spotlights_noop_when_empty() {
+            let width = 10i32;
+            let height = 10i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            dim_outside_spotlights(&mut buf, width, height, &[], 0, 0);
+
+            assert!(buf.iter().all(|&b| b == 0));
+        }
+
+        #[test]
+        fn dim_outside_spotlights_mixed_spotlight_and_non_spotlight() {
+            let width = 20i32;
+            let height = 20i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            let rects = vec![(5, 5, 10, 10)];
+            dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
+
+            let inside_offset = (7 * width as usize + 7) * 4;
+            assert_eq!(buf[inside_offset + 3], 0, "spotlight interior should be clear");
+
+            let outside_offset = (0 * width as usize + 0) * 4;
+            assert_eq!(buf[outside_offset + 3], 160, "outside spotlight should be dimmed");
+
+            let non_spotlight_interior = (15 * width as usize + 15) * 4;
+            assert_eq!(buf[non_spotlight_interior + 3], 160, "non-spotlight interior stays dimmed");
+        }
+
+        #[test]
+        fn dim_outside_spotlights_overlapping_rects() {
+            let width = 20i32;
+            let height = 20i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            let rects = vec![(2, 2, 10, 10), (5, 5, 15, 15)];
+            dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
+
+            let overlap_offset = (7 * width as usize + 7) * 4;
+            assert_eq!(buf[overlap_offset + 3], 0, "overlap interior should be clear");
+
+            let outside_offset = (0 * width as usize + 0) * 4;
+            assert_eq!(buf[outside_offset + 3], 160, "outside both should be dimmed");
+        }
+
+        #[test]
+        fn dim_outside_spotlights_with_window_offset() {
+            let width = 10i32;
+            let height = 10i32;
+            let mut buf = vec![0u8; (width * height * 4) as usize];
+
+            let rects = vec![(12, 12, 17, 17)];
+            dim_outside_spotlights(&mut buf, width, height, &rects, 10, 10);
+
+            let inside_offset = (4 * width as usize + 4) * 4;
+            assert_eq!(buf[inside_offset + 3], 0, "inside should be clear with offset");
+
+            let outside_offset = 0;
+            assert_eq!(buf[outside_offset + 3], 160, "outside should be dimmed with offset");
         }
     }
 }
