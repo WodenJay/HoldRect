@@ -133,23 +133,32 @@ Expected: compilation errors — `is_autostart_enabled`, `set_autostart`, `quote
 
 - [ ] **Step 3: Register module in `src/main.rs`**
 
-Add at line 3:
+Add after line 2 (`mod config;`):
 ```rust
+#[cfg(windows)]
 mod autostart;
 ```
 
 - [ ] **Step 4: Implement `src/autostart.rs`**
 
+> **API notes (from review):**
+> - All `Reg*W` functions return `WIN32_ERROR`, NOT `Result`. Use `.ok()?` to propagate errors.
+> - `RegOpenKeyExW` 3rd param (`uloptions`) is `u32`, pass `0u32`.
+> - `RegSetValueExW` 3rd param (`reserved`) is `u32`, pass `0u32`.
+> - `RegSetValueExW` 5th param (`lpdata`) is `Option<&[u8]>`, pass wide bytes directly.
+> - `RegDeleteValueW` returns `WIN32_ERROR`; use `.ok()` then match to handle `ERROR_FILE_NOT_FOUND`.
+> - Always close `HKEY` handle before returning (closure pattern for error safety).
+
 ```rust
 // src/autostart.rs
 use std::ffi::OsStr;
-use windows::core::w;
 use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 use windows::Win32::System::Registry::*;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE_NAME: &str = "HoldRect";
 
+/// Check if "HoldRect" value exists in the Run key (path-agnostic).
 fn quoted_exe_path() -> String {
     let exe = std::env::current_exe().unwrap_or_default();
     let path = exe.to_string_lossy();
@@ -159,13 +168,7 @@ fn quoted_exe_path() -> String {
 fn run_key() -> Result<HKEY, windows::core::Error> {
     let mut hkey = HKEY::default();
     unsafe {
-        RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            RUN_KEY,
-            None,
-            KEY_READ | KEY_WRITE,
-            &mut hkey,
-        )?;
+        RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0u32, KEY_READ | KEY_WRITE, &mut hkey).ok()?;
     }
     Ok(hkey)
 }
@@ -175,50 +178,36 @@ pub fn is_autostart_enabled() -> bool {
         Ok(h) => h,
         Err(_) => return false,
     };
-    let result = unsafe {
-        RegQueryValueExW(
-            hkey,
-            VALUE_NAME,
-            None,
-            None,
-            None,
-            None,
-        )
-    };
+    let result = unsafe { RegQueryValueExW(hkey, VALUE_NAME, None, None, None, None) };
     unsafe { let _ = RegCloseKey(hkey); }
     result.is_ok()
 }
 
 pub fn set_autostart(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
     let hkey = run_key()?;
-    if enable {
-        let value = quoted_exe_path();
-        let wide: Vec<u16> = OsStr::new(&value)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        unsafe {
-            RegSetValueExW(
-                hkey,
-                VALUE_NAME,
-                None,
-                REG_SZ,
-                Some(std::slice::from_raw_parts(
-                    wide.as_ptr() as *const u8,
-                    wide.len() * 2,
-                )),
-            )?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        if enable {
+            let value = quoted_exe_path();
+            let wide: Vec<u16> = OsStr::new(&value)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let wide_bytes = unsafe {
+                std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2)
+            };
+            unsafe { RegSetValueExW(hkey, VALUE_NAME, 0u32, REG_SZ, Some(wide_bytes)).ok()?; }
+        } else {
+            let del_result = unsafe { RegDeleteValueW(hkey, VALUE_NAME) }.ok();
+            match del_result {
+                Ok(()) => {}
+                Err(e) if e.code() == ERROR_FILE_NOT_FOUND.into() => {}
+                Err(e) => return Err(e.into()),
+            }
         }
-    } else {
-        let result = unsafe { RegDeleteValueW(hkey, VALUE_NAME) };
-        match result {
-            Ok(()) => {}
-            Err(e) if e.code() == ERROR_FILE_NOT_FOUND.into() => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
+        Ok(())
+    })();
     unsafe { let _ = RegCloseKey(hkey); }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
