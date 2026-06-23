@@ -1,4 +1,6 @@
 pub mod animation;
+#[cfg(windows)]
+pub mod gdi_renderer;
 
 use std::time::Instant;
 use crate::state::{AppState, InputEvent};
