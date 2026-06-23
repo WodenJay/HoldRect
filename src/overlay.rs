@@ -241,7 +241,7 @@ fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &Col
         ColorMode::Solid { r, g, b } => (*r, *g, *b),
         ColorMode::Rainbow => {
             let pos = perimeter_position(x, y, x0, y0, x1, y1);
-            let hue = ((pos + time_offset) % 1.0) * 360.0;
+            let hue = (pos + time_offset).fract() * 360.0;
             hsv_to_rgb(hue, 1.0, 1.0)
         }
     }
@@ -323,11 +323,10 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_w
 
         let stride = width as usize * 4;
 
-        let time_secs = std::time::SystemTime::now()
+        let elapsed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f32();
-        let time_offset = time_secs * FLOW_SPEED;
+            .unwrap_or_default();
+        let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
 
         let set_pixel = |x: i32, y: i32, r: u8, g: u8, b: u8| {
             if x < 0 || x >= width || y < 0 || y >= height {
@@ -344,6 +343,8 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_w
         };
 
         if x1 > x0 && y1 > y0 {
+
+
             for offset in 0..border_width {
                 let top = y0 + offset;
                 let bottom = y1 - offset;
