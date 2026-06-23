@@ -23,8 +23,9 @@ fn main() {
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
 
     // Start Win32 input hook listener (replaces rdev)
+    let config = crate::config::AppConfig::load();
     #[cfg(windows)]
-    crate::hook::start_hook_listener(input_tx, proxy);
+    crate::hook::start_hook_listener(input_tx, proxy, config.modifier_vk_codes);
 
     let _tray_icon = start_tray(exit_tx);
 

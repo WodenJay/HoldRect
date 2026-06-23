@@ -13,12 +13,14 @@ static SHOULD_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static DRAG_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
 static PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
+static MODIFIER_CODES: OnceLock<Vec<u32>> = OnceLock::new();
 
 /// Start global input hook listener on a background thread.
-/// Replaces rdev — intercepts and suppresses Ctrl+mouse combo.
-pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>) {
+/// Replaces rdev — intercepts and suppresses modifier+mouse combo.
+pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>, modifier_codes: Vec<u32>) {
     TX.set(tx).expect("start_hook_listener called twice");
     PROXY.set(proxy).expect("start_hook_listener called twice");
+    MODIFIER_CODES.set(modifier_codes).expect("start_hook_listener called twice");
 
     std::thread::spawn(move || unsafe {
         let _keyboard = SetWindowsHookExW(
@@ -54,7 +56,7 @@ unsafe extern "system" fn keyboard_hook_proc(
         let kb = *(l_param.0 as *const KBDLLHOOKSTRUCT);
         let is_key_down = w_param == WPARAM(WM_KEYDOWN as usize) || w_param == WPARAM(WM_SYSKEYDOWN as usize);
 
-        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down) {
+        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, MODIFIER_CODES.get().expect("MODIFIER_CODES not set")) {
             SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
             if let Some(tx) = TX.get() {
                 let _ = tx.send(event);
@@ -80,10 +82,10 @@ unsafe extern "system" fn mouse_hook_proc(
         // Alt-held state. GetAsyncKeyState(VK_MENU) is unreliable inside
         // WH_MOUSE_LL callbacks in browsers/terminals.
         let suppress = SHOULD_SUPPRESS.load(Ordering::Relaxed);
-        let alt_held = suppress;
+        let modifier_held = suppress;
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
 
-        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, alt_held);
+        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, modifier_held);
 
         // Update DRAG_IN_PROGRESS based on decision.
         // Gated on `should_suppress` because decide_mouse returns true exactly
@@ -113,13 +115,8 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 // Pure decision function — no Win32 side effects, fully unit-testable
-fn decide_keyboard(vk_code: u32, is_key_down: bool) -> Option<InputEvent> {
-    // Windows reports VK_MENU (0x12) for generic Alt in many contexts
-    // (browsers, terminals). Must also catch VK_LMENU / VK_RMENU.
-    let is_alt = vk_code == VK_MENU.0 as u32
-        || vk_code == VK_LMENU.0 as u32
-        || vk_code == VK_RMENU.0 as u32;
-    if !is_alt {
+fn decide_keyboard(vk_code: u32, is_key_down: bool, modifier_codes: &[u32]) -> Option<InputEvent> {
+    if !modifier_codes.contains(&vk_code) {
         return None;
     }
     Some(InputEvent::ModifierChanged { pressed: is_key_down })
@@ -136,7 +133,7 @@ fn decide_mouse(
     pt: (i32, i32),
     should_suppress: bool,
     drag_in_progress: bool,
-    ctrl_held: bool,
+    modifier_held: bool,
 ) -> (Option<InputEvent>, bool) {
     // If drag in progress, track position and handle button release
     if drag_in_progress {
@@ -151,12 +148,12 @@ fn decide_mouse(
         return (None, false);
     }
 
-    // No drag in progress: only act if suppress mode active and Ctrl held
-    if !should_suppress || !ctrl_held {
+    // No drag in progress: only act if suppress mode active and modifier held
+    if !should_suppress || !modifier_held {
         return (None, false);
     }
 
-    // should_suppress && ctrl_held
+    // should_suppress && modifier_held
     if msg == WM_LBUTTONDOWN {
         return (Some(InputEvent::MouseButtonDown { x: pt.0, y: pt.1 }), true);
     }
@@ -170,43 +167,43 @@ mod tests {
 
     #[test]
     fn alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_LMENU.0 as u32, true);
+        let result = decide_keyboard(VK_LMENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn alt_up_returns_modifier_released() {
-        let result = decide_keyboard(VK_LMENU.0 as u32, false);
+        let result = decide_keyboard(VK_LMENU.0 as u32, false, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
     fn right_alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_RMENU.0 as u32, true);
+        let result = decide_keyboard(VK_RMENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn generic_alt_down_returns_modifier_pressed() {
-        let result = decide_keyboard(VK_MENU.0 as u32, true);
+        let result = decide_keyboard(VK_MENU.0 as u32, true, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: true }));
     }
 
     #[test]
     fn generic_alt_up_returns_modifier_released() {
-        let result = decide_keyboard(VK_MENU.0 as u32, false);
+        let result = decide_keyboard(VK_MENU.0 as u32, false, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, Some(InputEvent::ModifierChanged { pressed: false }));
     }
 
     #[test]
     fn non_alt_key_returns_none() {
-        let result = decide_keyboard(VK_LSHIFT.0 as u32, true);
+        let result = decide_keyboard(VK_LSHIFT.0 as u32, true, &[0x12, 0xA4, 0xA5]);
         assert_eq!(result, None);
     }
 
     #[test]
     fn non_alt_key_up_returns_none() {
-        let result = decide_keyboard(0x41, false); // 'A' key
+        let result = decide_keyboard(0x41, false, &[0x12, 0xA4, 0xA5]); // 'A' key
         assert_eq!(result, None);
     }
 
@@ -284,7 +281,8 @@ mod tests {
         let mut drag_in_progress = false;
 
         // Step 1: Alt pressed — keyboard hook fires
-        let event = decide_keyboard(VK_LMENU.0 as u32, true);
+        let alt_codes: &[u32] = &[0x12, 0xA4, 0xA5];
+        let event = decide_keyboard(VK_LMENU.0 as u32, true, alt_codes);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
         should_suppress = true; // hook proc stores this
 
@@ -307,7 +305,7 @@ mod tests {
         drag_in_progress = false; // hook proc stores this on suppress+LButtonUp
 
         // Step 5: Alt released — keyboard hook fires
-        let event = decide_keyboard(VK_LMENU.0 as u32, false);
+        let event = decide_keyboard(VK_LMENU.0 as u32, false, alt_codes);
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
         should_suppress = false; // hook proc stores this
 
@@ -349,5 +347,43 @@ mod tests {
         let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (400, 500), should_suppress, drag_in_progress, alt_held);
         assert_eq!(event, Some(InputEvent::MouseMove { x: 400, y: 500 }));
         assert!(!suppress, "MouseMove must pass through during drag even if Ctrl released");
+    }
+
+    // --- Configurable modifier key tests (3-param decide_keyboard) ---
+
+    #[test]
+    fn alt_key_with_alt_config_detected() {
+        let codes = vec![0x12, 0xA4, 0xA5];
+        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn ctrl_key_with_ctrl_config_detected() {
+        let codes = vec![0x11, 0xA2, 0xA3];
+        assert_eq!(decide_keyboard(VK_LCONTROL.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn shift_key_with_shift_config_detected() {
+        let codes = vec![0x10, 0xA0, 0xA1];
+        assert_eq!(decide_keyboard(VK_LSHIFT.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn win_key_with_win_config_detected() {
+        let codes = vec![0x5B, 0x5C];
+        assert_eq!(decide_keyboard(VK_LWIN.0 as u32, true, &codes), Some(InputEvent::ModifierChanged { pressed: true }));
+    }
+
+    #[test]
+    fn non_modifier_ignored_with_alt_config() {
+        let codes = vec![0x12, 0xA4, 0xA5];
+        assert_eq!(decide_keyboard(0x41, true, &codes), None); // 'A' key
+    }
+
+    #[test]
+    fn alt_key_not_detected_with_ctrl_config() {
+        let codes = vec![0x11, 0xA2, 0xA3]; // Ctrl config
+        assert_eq!(decide_keyboard(VK_LMENU.0 as u32, true, &codes), None);
     }
 }
