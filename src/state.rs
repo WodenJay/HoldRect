@@ -20,11 +20,21 @@ pub enum DrawingState {
     Drawing { start: (i32, i32), current: (i32, i32) },
 }
 
+/// A pinned rectangle with per-rect flags
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinnedRect {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+    pub spotlight: bool,
+}
+
 /// Application state
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
     pub drawing: DrawingState,
-    pub pinned_rects: Vec<(i32, i32, i32, i32)>,
+    pub pinned_rects: Vec<PinnedRect>,
     pub pinned_active: bool,
 }
 
@@ -86,7 +96,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
             let mut rects = state.pinned_rects.clone();
             if state.pinned_active {
                 let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
-                rects.push((x0, y0, x1, y1));
+                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: false });
             }
             (DrawingState::Armed, false, rects)
         }
@@ -99,7 +109,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
             let mut rects = state.pinned_rects.clone();
             if state.pinned_active {
                 let (x0, y0, x1, y1) = normalize_rect(*start, *current);
-                rects.push((x0, y0, x1, y1));
+                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: false });
             }
             (DrawingState::Idle, false, rects)
         }
@@ -456,7 +466,7 @@ mod tests {
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
         assert_eq!(next.drawing, DrawingState::Armed);
-        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
         assert!(!next.pinned_active, "pinned_active resets after mouse up");
     }
 
@@ -468,7 +478,7 @@ mod tests {
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 10, y: 20 });
-        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
     }
 
     #[test]
@@ -494,14 +504,14 @@ mod tests {
         state = process_event(&state, &InputEvent::MouseButtonDown { x: 10, y: 10 });
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 50 });
         assert_eq!(state.pinned_rects.len(), 1);
-        assert_eq!(state.pinned_rects[0], (10, 10, 50, 50));
+        assert_eq!(state.pinned_rects[0], PinnedRect { x0: 10, y0: 10, x1: 50, y1: 50, spotlight: false });
 
         // Second rect: still modifier held, draw another (pinned_active reset, need to toggle again)
         state = process_event(&state, &InputEvent::DigitPressed(1));
         state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
         assert_eq!(state.pinned_rects.len(), 2);
-        assert_eq!(state.pinned_rects[1], (100, 100, 200, 200));
+        assert_eq!(state.pinned_rects[1], PinnedRect { x0: 100, y0: 100, x1: 200, y1: 200, spotlight: false });
     }
 
     // --- Pinned mode: per-rect reset ---
@@ -523,7 +533,7 @@ mod tests {
     fn escape_clears_pinned_rects() {
         let state = AppState {
             drawing: DrawingState::Armed,
-            pinned_rects: vec![(10, 20, 50, 80), (100, 100, 200, 200)],
+            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }, PinnedRect { x0: 100, y0: 100, x1: 200, y1: 200, spotlight: false }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -535,7 +545,7 @@ mod tests {
     fn escape_during_draw_cancels_and_clears_pinned() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
-            pinned_rects: vec![(0, 0, 100, 100)],
+            pinned_rects: vec![PinnedRect { x0: 0, y0: 0, x1: 100, y1: 100, spotlight: false }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -548,7 +558,7 @@ mod tests {
     fn escape_in_idle_clears_pinned_rects() {
         let state = AppState {
             drawing: DrawingState::Idle,
-            pinned_rects: vec![(10, 20, 50, 80)],
+            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -578,7 +588,7 @@ mod tests {
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
         assert!(!next.pinned_active);
         assert_eq!(next.drawing, DrawingState::Idle);
     }

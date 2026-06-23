@@ -246,9 +246,9 @@ impl App {
             let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
 
             // Draw all pinned rects
-            for &(x0, y0, x1, y1) in &self.state.pinned_rects {
+            for rect in &self.state.pinned_rects {
                 draw_rect_in_dib(cache, width, height, wr.left, wr.top,
-                                 (x0, y0), (x1, y1), self.border_width, &self.color_mode, time_offset);
+                                 (rect.x0, rect.y0), (rect.x1, rect.y1), self.border_width, &self.color_mode, time_offset);
             }
 
             // Draw active rect on top
