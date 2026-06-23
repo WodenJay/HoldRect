@@ -24,12 +24,16 @@ pub enum DrawingState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
     pub drawing: DrawingState,
+    pub pinned_rects: Vec<(i32, i32, i32, i32)>,
+    pub pinned_active: bool,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             drawing: DrawingState::Idle,
+            pinned_rects: Vec::new(),
+            pinned_active: false,
         }
     }
 }
@@ -64,7 +68,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
         // All other combinations: no state change
         _ => state.drawing.clone(),
     };
-    AppState { drawing }
+    AppState { drawing, ..Default::default() }
 }
 
 #[cfg(test)]
@@ -75,14 +79,14 @@ mod tests {
 
     #[test]
     fn idle_modifier_down_transitions_to_armed() {
-        let state = AppState { drawing: DrawingState::Idle };
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
 
     #[test]
     fn armed_mouse_down_transitions_to_drawing() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 200 });
         assert_eq!(
             next.drawing,
@@ -94,6 +98,7 @@ mod tests {
     fn drawing_mouse_move_updates_current() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (10, 20) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseMove { x: 50, y: 80 });
         assert_eq!(
@@ -106,6 +111,7 @@ mod tests {
     fn drawing_mouse_up_transitions_to_armed() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
         assert_eq!(next.drawing, DrawingState::Armed);
@@ -113,7 +119,7 @@ mod tests {
 
     #[test]
     fn armed_modifier_up_transitions_to_idle() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
@@ -122,6 +128,7 @@ mod tests {
     fn drawing_modifier_up_transitions_to_idle() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
         assert_eq!(next.drawing, DrawingState::Idle);
@@ -131,28 +138,28 @@ mod tests {
 
     #[test]
     fn idle_mouse_down_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle };
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn idle_mouse_move_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle };
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseMove { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn idle_modifier_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle };
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn armed_mouse_move_is_noop() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseMove { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
@@ -161,6 +168,7 @@ mod tests {
     fn drawing_mouse_down_is_noop() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 99, y: 99 });
         assert_eq!(
@@ -173,6 +181,7 @@ mod tests {
     fn drawing_modifier_down_is_noop() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(
@@ -185,14 +194,14 @@ mod tests {
 
     #[test]
     fn idle_mouse_button_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle };
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn armed_mouse_button_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
@@ -201,7 +210,7 @@ mod tests {
 
     #[test]
     fn drawing_with_negative_coordinates() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: -1920, y: -1080 });
         assert_eq!(
             next.drawing,
@@ -216,7 +225,7 @@ mod tests {
 
     #[test]
     fn drawing_with_i32_boundary_values() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN });
         assert_eq!(
             next.drawing,
@@ -231,7 +240,7 @@ mod tests {
 
     #[test]
     fn drawing_at_origin() {
-        let state = AppState { drawing: DrawingState::Armed };
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 0, y: 0 });
         assert_eq!(
             next.drawing,
@@ -248,6 +257,7 @@ mod tests {
     fn drawing_zero_size_mouse_up_returns_to_armed() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (100, 200), current: (100, 200) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Armed);
@@ -259,6 +269,7 @@ mod tests {
     fn multiple_mouse_moves_preserve_start() {
         let state = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (10, 20) },
+            ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseMove { x: 30, y: 40 });
         assert_eq!(
@@ -279,7 +290,7 @@ mod tests {
 
     #[test]
     fn full_draw_lifecycle() {
-        let mut state = AppState { drawing: DrawingState::Idle };
+        let mut state = AppState { drawing: DrawingState::Idle, ..Default::default() };
 
         state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(state.drawing, DrawingState::Armed);
@@ -300,7 +311,7 @@ mod tests {
 
     #[test]
     fn modifier_repress_after_release() {
-        let mut state = AppState { drawing: DrawingState::Idle };
+        let mut state = AppState { drawing: DrawingState::Idle, ..Default::default() };
 
         state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(state.drawing, DrawingState::Armed);
@@ -338,10 +349,18 @@ mod tests {
     fn app_state_clone_independence() {
         let original = AppState {
             drawing: DrawingState::Drawing { start: (10, 20), current: (30, 40) },
+            ..Default::default()
         };
         let mut cloned = original.clone();
         cloned.drawing = DrawingState::Idle;
         assert_eq!(original.drawing, DrawingState::Drawing { start: (10, 20), current: (30, 40) });
         assert_eq!(cloned.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn default_app_state_has_empty_pinned() {
+        let state = AppState::default();
+        assert!(state.pinned_rects.is_empty());
+        assert!(!state.pinned_active);
     }
 }
