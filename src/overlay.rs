@@ -19,12 +19,109 @@ use crate::state::process_event;
 
 const FLOW_SPEED: f32 = 0.1;
 
+/// Cached DIB section for the overlay rendering. Allocated once and reused
+/// across frames; only recreated when the window dimensions change.
+#[cfg(windows)]
+struct DibCache {
+    bitmap: windows::Win32::Graphics::Gdi::HBITMAP,
+    memory_dc: windows::Win32::Graphics::Gdi::HDC,
+    pixels: *mut u8,
+    width: i32,
+    height: i32,
+}
+
+#[cfg(windows)]
+impl DibCache {
+    fn new(width: i32, height: i32) -> Option<Self> {
+        use windows::Win32::Graphics::Gdi::*;
+
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        let bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0 as u32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut pixels: *mut u8 = std::ptr::null_mut();
+
+        let bitmap = unsafe {
+            match CreateDIBSection(
+                None,
+                &bitmap_info,
+                DIB_RGB_COLORS,
+                &mut pixels as *mut *mut u8 as _,
+                None,
+                0,
+            ) {
+                Ok(bitmap) => bitmap,
+                Err(_) => return None,
+            }
+        };
+
+        if pixels.is_null() {
+            unsafe { let _ = DeleteObject(bitmap); }
+            return None;
+        }
+
+        let screen_dc = unsafe { GetDC(windows::Win32::Foundation::HWND::default()) };
+        let memory_dc = unsafe { CreateCompatibleDC(screen_dc) };
+        unsafe {
+            SelectObject(memory_dc, bitmap);
+            let _ = ReleaseDC(windows::Win32::Foundation::HWND::default(), screen_dc);
+        }
+
+        Some(Self { bitmap, memory_dc, pixels, width, height })
+    }
+
+    fn ensure_size(&mut self, width: i32, height: i32) {
+        if self.width == width && self.height == height {
+            return;
+        }
+        // Size changed -- drop old and allocate new
+        self.destroy();
+        if let Some(new_cache) = Self::new(width, height) {
+            *self = new_cache;
+        }
+    }
+
+    fn destroy(&mut self) {
+        use windows::Win32::Graphics::Gdi::*;
+        unsafe {
+            SelectObject(self.memory_dc, windows::Win32::Graphics::Gdi::HBITMAP::default());
+            let _ = DeleteObject(self.bitmap);
+            let _ = DeleteDC(self.memory_dc);
+        }
+        self.pixels = std::ptr::null_mut();
+        self.width = 0;
+        self.height = 0;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for DibCache {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
 pub struct App {
     window: Option<Window>,
     state: AppState,
     input_rx: Receiver<InputEvent>,
     border_width: i32,
     color_mode: ColorMode,
+    #[cfg(windows)]
+    dib_cache: Option<DibCache>,
 }
 
 impl App {
@@ -35,6 +132,8 @@ impl App {
             input_rx,
             border_width,
             color_mode,
+            #[cfg(windows)]
+            dib_cache: None,
         }
     }
 }
@@ -98,7 +197,7 @@ impl ApplicationHandler for App {
             DrawingState::Drawing { start, current } => {
                 if let Some(window) = &self.window {
                     #[cfg(windows)]
-                    draw_border(window, *start, *current, self.border_width, &self.color_mode);
+                    draw_border(window, *start, *current, self.border_width, &self.color_mode, &mut self.dib_cache);
                     #[cfg(windows)]
                     show_window_topmost(window);
                 }
@@ -125,7 +224,7 @@ impl App {
 
         #[cfg(windows)]
         {
-            draw_border(window, *start, *current, self.border_width, &self.color_mode);
+            draw_border(window, *start, *current, self.border_width, &self.color_mode, &mut self.dib_cache);
             show_window_topmost(window);
         }
     }
@@ -249,8 +348,16 @@ fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &Col
 
 /// Draw border rectangle using UpdateLayeredWindow with per-pixel alpha.
 /// Background is fully transparent (alpha=0), border pixels use configured color/rainbow.
+/// Uses cached DIB section to avoid per-frame allocation.
 #[cfg(windows)]
-fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_width: i32, color_mode: &ColorMode) {
+fn draw_border(
+    window: &Window,
+    start: (i32, i32),
+    current: (i32, i32),
+    border_width: i32,
+    color_mode: &ColorMode,
+    dib_cache: &mut Option<DibCache>,
+) {
     use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -270,102 +377,48 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_w
             return;
         }
 
-        let bitmap_info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let mut pixels: *mut u8 = std::ptr::null_mut();
-
-        let bitmap = match CreateDIBSection(
-            None,
-            &bitmap_info,
-            DIB_RGB_COLORS,
-            &mut pixels as *mut *mut u8 as _,
-            None,
-            0,
-        ) {
-            Ok(bitmap) => bitmap,
-            Err(_) => return,
-        };
-
-        if pixels.is_null() {
-            let _ = DeleteObject(bitmap);
-            return;
+        // Allocate or resize cached DIB
+        match dib_cache {
+            Some(cache) => cache.ensure_size(width, height),
+            None => {
+                *dib_cache = DibCache::new(width, height);
+            }
         }
-
-        let screen_dc = GetDC(HWND::default());
-        let memory_dc = CreateCompatibleDC(screen_dc);
-        let old_bitmap = SelectObject(memory_dc, bitmap);
+        let cache = match dib_cache {
+            Some(c) if !c.pixels.is_null() => c,
+            _ => return,
+        };
 
         // Entire window fully transparent
         std::ptr::write_bytes(
-            pixels,
+            cache.pixels,
             0,
             width as usize * height as usize * 4,
         );
-
-        let (global_x0, global_y0, global_x1, global_y1) =
-            normalize_rect(start, current);
-
-        let x0 = (global_x0 - wr.left).clamp(0, width - 1);
-        let y0 = (global_y0 - wr.top).clamp(0, height - 1);
-        let x1 = (global_x1 - wr.left).clamp(0, width - 1);
-        let y1 = (global_y1 - wr.top).clamp(0, height - 1);
-
-        let stride = width as usize * 4;
 
         let elapsed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
 
-        let set_pixel = |x: i32, y: i32, r: u8, g: u8, b: u8| {
-            if x < 0 || x >= width || y < 0 || y >= height {
-                return;
-            }
+        // Build a mutable slice over the cached pixel buffer
+        let pixel_slice = std::slice::from_raw_parts_mut(
+            cache.pixels,
+            width as usize * height as usize * 4,
+        );
 
-            let pixel = pixels.add(y as usize * stride + x as usize * 4);
-
-            // BGRA — alpha must be 255
-            *pixel.add(0) = b;
-            *pixel.add(1) = g;
-            *pixel.add(2) = r;
-            *pixel.add(3) = 255;
-        };
-
-        if x1 > x0 && y1 > y0 {
-
-
-            for offset in 0..border_width {
-                let top = y0 + offset;
-                let bottom = y1 - offset;
-                let left = x0 + offset;
-                let right = x1 - offset;
-
-                for x in left..=right {
-                    let (r, g, b) = color_at(x, top, x0, y0, x1, y1, color_mode, time_offset);
-                    set_pixel(x, top, r, g, b);
-                    let (r, g, b) = color_at(x, bottom, x0, y0, x1, y1, color_mode, time_offset);
-                    set_pixel(x, bottom, r, g, b);
-                }
-
-                for y in top..=bottom {
-                    let (r, g, b) = color_at(left, y, x0, y0, x1, y1, color_mode, time_offset);
-                    set_pixel(left, y, r, g, b);
-                    let (r, g, b) = color_at(right, y, x0, y0, x1, y1, color_mode, time_offset);
-                    set_pixel(right, y, r, g, b);
-                }
-            }
-        }
+        fill_border_pixels(
+            pixel_slice,
+            width,
+            height,
+            wr.left,
+            wr.top,
+            start,
+            current,
+            border_width,
+            color_mode,
+            time_offset,
+        );
 
         let destination = POINT {
             x: wr.left,
@@ -386,12 +439,14 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_w
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
 
+        let screen_dc = GetDC(HWND::default());
+
         let result = UpdateLayeredWindow(
             hwnd,
             screen_dc,
             Some(&destination),
             Some(&size),
-            memory_dc,
+            cache.memory_dc,
             Some(&source),
             COLORREF(0),
             Some(&blend),
@@ -402,9 +457,6 @@ fn draw_border(window: &Window, start: (i32, i32), current: (i32, i32), border_w
             eprintln!("UpdateLayeredWindow failed: {error:?}");
         }
 
-        SelectObject(memory_dc, old_bitmap);
-        let _ = DeleteObject(bitmap);
-        let _ = DeleteDC(memory_dc);
         let _ = ReleaseDC(HWND::default(), screen_dc);
     }
 }
@@ -420,6 +472,127 @@ pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
 pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode) {
     let mut app = App::new(input_rx, border_width, color_mode);
     event_loop.run_app(&mut app).expect("Event loop error");
+}
+
+/// Fill border pixels in a BGRA buffer. Pure logic, no GDI side effects.
+/// `buffer` is a BGRA pixel buffer of `width * height` pixels (each 4 bytes).
+/// `win_x`, `win_y` are the window position in global screen coordinates.
+/// `start`, `current` are the selection rectangle corners in global coordinates.
+/// `border_width` is the thickness of the border in pixels.
+/// Returns (pixels_written, set_pixel_calls) where set_pixel_calls counts every
+/// invocation including overwrites of already-written pixels.
+fn fill_border_pixels(
+    buffer: &mut [u8],
+    width: i32,
+    height: i32,
+    win_x: i32,
+    win_y: i32,
+    start: (i32, i32),
+    current: (i32, i32),
+    border_width: i32,
+    color_mode: &ColorMode,
+    time_offset: f32,
+) -> (usize, usize) {
+    if width <= 0 || height <= 0 {
+        return (0, 0);
+    }
+
+    let (global_x0, global_y0, global_x1, global_y1) = normalize_rect(start, current);
+
+    let x0 = (global_x0 - win_x).clamp(0, width - 1);
+    let y0 = (global_y0 - win_y).clamp(0, height - 1);
+    let x1 = (global_x1 - win_x).clamp(0, width - 1);
+    let y1 = (global_y1 - win_y).clamp(0, height - 1);
+
+    let stride = width as usize * 4;
+    let mut unique_written = 0usize;
+    let mut total_calls = 0usize;
+
+    let set_pixel = |buf: &mut [u8], x: i32, y: i32, r: u8, g: u8, b: u8| {
+        if x < 0 || x >= width || y < 0 || y >= height {
+            return false;
+        }
+        let offset = y as usize * stride + x as usize * 4;
+        let was_zero = buf[offset + 3] == 0;
+        buf[offset] = b;
+        buf[offset + 1] = g;
+        buf[offset + 2] = r;
+        buf[offset + 3] = 255;
+        was_zero
+    };
+
+    if x1 > x0 && y1 > y0 {
+        for offset in 0..border_width {
+            let top = y0 + offset;
+            let bottom = y1 - offset;
+            let left = x0 + offset;
+            let right = x1 - offset;
+
+            // Top and bottom horizontal edges (full width including corners)
+            for x in left..=right {
+                let (r, g, b) = color_at(x, top, x0, y0, x1, y1, color_mode, time_offset);
+                total_calls += 1;
+                if set_pixel(buffer, x, top, r, g, b) {
+                    unique_written += 1;
+                }
+                if top != bottom {
+                    let (r, g, b) = color_at(x, bottom, x0, y0, x1, y1, color_mode, time_offset);
+                    total_calls += 1;
+                    if set_pixel(buffer, x, bottom, r, g, b) {
+                        unique_written += 1;
+                    }
+                }
+            }
+
+            // Left and right vertical edges (skip corners already drawn above)
+            let inner_top = top + 1;
+            let inner_bottom = bottom - 1;
+            if inner_top <= inner_bottom {
+                for y in inner_top..=inner_bottom {
+                    let (r, g, b) = color_at(left, y, x0, y0, x1, y1, color_mode, time_offset);
+                    total_calls += 1;
+                    if set_pixel(buffer, left, y, r, g, b) {
+                        unique_written += 1;
+                    }
+                    if left != right {
+                        let (r, g, b) = color_at(right, y, x0, y0, x1, y1, color_mode, time_offset);
+                        total_calls += 1;
+                        if set_pixel(buffer, right, y, r, g, b) {
+                            unique_written += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (unique_written, total_calls)
+}
+
+/// Expected number of unique border pixels for a rect (x0,y0)-(x1,y1) with given border_width.
+/// This is the correct count with no double-writes at corners.
+fn expected_border_pixel_count(x0: i32, y0: i32, x1: i32, y1: i32, border_width: i32) -> usize {
+    let mut count = 0usize;
+    for offset in 0..border_width {
+        let top = y0 + offset;
+        let bottom = y1 - offset;
+        let left = x0 + offset;
+        let right = x1 - offset;
+
+        if top == bottom {
+            // Single row
+            count += (right - left + 1) as usize;
+        } else if left == right {
+            // Single column
+            count += (bottom - top + 1) as usize;
+        } else {
+            // Top edge + bottom edge (full width)
+            count += (right - left + 1) as usize * 2;
+            // Left + right edges (excluding corners already counted)
+            count += (bottom - top - 1) as usize * 2;
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -524,5 +697,148 @@ mod tests {
     fn perimeter_mid_right_edge() {
         let pos = perimeter_position(100, 50, 0, 0, 100, 100);
         assert!((pos - 0.375).abs() < 0.001, "expected ~0.375, got {pos}");
+    }
+
+    // -- fill_border_pixels tests (Bug 1: DIB caching, Bug 2: corner double-write) --
+
+    #[test]
+    fn fill_border_can_be_called_repeatedly_on_same_buffer() {
+        // Bug 1: Demonstrate that fill_border_pixels operates on a reusable buffer.
+        // If DIB caching is implemented, the same buffer should be usable across frames.
+        let width: i32 = 200;
+        let height: i32 = 200;
+        let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        // Frame 1: draw at (10,10)-(50,50)
+        let (unique1, _) = fill_border_pixels(
+            &mut buffer, width, height, 0, 0,
+            (10, 10), (50, 50), 4, &color_mode, 0.0,
+        );
+        assert!(unique1 > 0, "first frame should draw pixels");
+
+        // Clear buffer (simulating transparent background reset, like the real code does)
+        buffer.fill(0);
+
+        // Frame 2: draw at (20,20)-(80,80) -- different rect, same buffer
+        let (unique2, _) = fill_border_pixels(
+            &mut buffer, width, height, 0, 0,
+            (20, 20), (80, 80), 4, &color_mode, 0.0,
+        );
+        assert!(unique2 > 0, "second frame should draw pixels on reused buffer");
+
+        // Verify the second frame's pixels are correct (not corrupted by first frame)
+        // Check a pixel that should be in the border of frame 2 but NOT frame 1
+        let check_x = 76usize; // right edge of frame 2 border at offset 0
+        let check_y = 20usize; // top edge of frame 2
+        let offset = check_y * width as usize * 4 + check_x * 4;
+        assert_eq!(buffer[offset + 3], 255, "frame 2 border pixel should have alpha=255");
+        assert_eq!(buffer[offset + 2], 255, "frame 2 border pixel should have r=255");
+    }
+
+    #[test]
+    fn fill_border_no_duplicate_pixel_writes_at_corners() {
+        // Bug 2: The current implementation writes corner pixels twice (once from
+        // horizontal edge loop, once from vertical edge loop). This test verifies
+        // that total set_pixel calls equals the number of unique pixels -- no duplicates.
+        let width: i32 = 100;
+        let height: i32 = 100;
+        let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+        let border_width = 4;
+
+        let x0 = 10;
+        let y0 = 10;
+        let x1 = 90;
+        let y1 = 90;
+
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        let (unique_written, total_calls) = fill_border_pixels(
+            &mut buffer, width, height, 0, 0,
+            (x0, y0), (x1, y1), border_width, &color_mode, 0.0,
+        );
+
+        let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
+
+        assert_eq!(
+            total_calls, expected,
+            "total set_pixel calls ({total_calls}) should equal expected unique count ({expected}); \
+             corners are being called with set_pixel multiple times"
+        );
+        assert_eq!(
+            unique_written, expected,
+            "unique pixels written ({unique_written}) should equal expected ({expected})"
+        );
+    }
+
+    #[test]
+    fn fill_border_writes_correct_pixel_count_for_small_rect() {
+        // Verify the pixel count formula for a small, easily verifiable rect.
+        let width: i32 = 50;
+        let height: i32 = 50;
+        let color_mode = ColorMode::Solid { r: 0, g: 255, b: 0 };
+        let border_width = 2;
+
+        let x0 = 5;
+        let y0 = 5;
+        let x1 = 15;
+        let y1 = 15;
+
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        let (unique_written, total_calls) = fill_border_pixels(
+            &mut buffer, width, height, 0, 0,
+            (x0, y0), (x1, y1), border_width, &color_mode, 0.0,
+        );
+
+        let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
+
+        assert_eq!(
+            total_calls, expected,
+            "small rect total calls mismatch: got {total_calls}, expected {expected}"
+        );
+        assert_eq!(
+            unique_written, expected,
+            "small rect unique pixels mismatch: got {unique_written}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn fill_border_zero_area_rect_writes_nothing() {
+        let width: i32 = 50;
+        let height: i32 = 50;
+        let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        let (unique, total) = fill_border_pixels(
+            &mut buffer, width, height, 0, 0,
+            (10, 10), (10, 10), 4, &color_mode, 0.0,
+        );
+
+        assert_eq!(unique, 0, "zero-area rect should write no pixels");
+        assert_eq!(total, 0, "zero-area rect should make no set_pixel calls");
+        assert!(buffer.iter().all(|&b| b == 0), "buffer should remain all zeros");
+    }
+
+    #[test]
+    fn fill_border_respects_window_offset() {
+        // Verify that window position offset is correctly applied.
+        let width: i32 = 100;
+        let height: i32 = 100;
+        let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+        // Window at (500,500), rect at (510,510)-(520,520)
+        let (unique, _) = fill_border_pixels(
+            &mut buffer, width, height, 500, 500,
+            (510, 510), (520, 520), 2, &color_mode, 0.0,
+        );
+
+        assert!(unique > 0, "should draw pixels within window bounds");
+
+        // The rect (510,510)-(520,520) maps to buffer coords (10,10)-(20,20)
+        // Check pixel at (10,10) -- top-left corner of border
+        let offset = 10 * width as usize * 4 + 10 * 4;
+        assert_eq!(buffer[offset + 3], 255, "pixel at buffer (10,10) should be drawn");
     }
 }
