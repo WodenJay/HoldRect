@@ -69,15 +69,25 @@ pub fn set_autostart(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Global mutex to serialize registry-touching tests.
+    /// All autostart tests mutate the same HKCU Run key, so they must not run concurrently.
+    fn test_mutex() -> &'static Mutex<()> {
+        static M: OnceLock<Mutex<()>> = OnceLock::new();
+        M.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn enable_then_check() {
+        let _g = test_mutex().lock().unwrap();
         set_autostart(true).unwrap();
         assert!(is_autostart_enabled(), "should be enabled after set(true)");
     }
 
     #[test]
     fn disable_then_check() {
+        let _g = test_mutex().lock().unwrap();
         set_autostart(true).unwrap();
         set_autostart(false).unwrap();
         assert!(!is_autostart_enabled(), "should be disabled after set(false)");
@@ -85,6 +95,7 @@ mod tests {
 
     #[test]
     fn enable_idempotent() {
+        let _g = test_mutex().lock().unwrap();
         set_autostart(true).unwrap();
         set_autostart(true).unwrap();
         assert!(is_autostart_enabled(), "double enable should still be enabled");
@@ -92,6 +103,7 @@ mod tests {
 
     #[test]
     fn disable_idempotent() {
+        let _g = test_mutex().lock().unwrap();
         set_autostart(false).unwrap();
         set_autostart(false).unwrap();
         assert!(!is_autostart_enabled(), "double disable should still be disabled");
@@ -99,6 +111,8 @@ mod tests {
 
     #[test]
     fn exe_path_quoted_with_spaces() {
+        // No registry mutation — no mutex needed, but lock for hygiene
+        let _g = test_mutex().lock().unwrap();
         let path = quoted_exe_path();
         assert!(path.starts_with('"'), "path should start with quote: {}", path);
         assert!(path.ends_with('"'), "path should end with quote: {}", path);
@@ -106,6 +120,7 @@ mod tests {
 
     #[test]
     fn stale_path_overwritten_on_enable() {
+        let _g = test_mutex().lock().unwrap();
         // Write a stale path
         set_autostart(true).unwrap();
         // Enable again — should overwrite with current path (no error)
@@ -115,6 +130,7 @@ mod tests {
 
     #[test]
     fn disable_nonexistent_value_succeeds() {
+        let _g = test_mutex().lock().unwrap();
         set_autostart(false).unwrap();
         set_autostart(false).unwrap(); // already absent
         // Should not panic or return error
