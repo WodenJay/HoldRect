@@ -12,10 +12,22 @@ One persistent hidden popup window. Show/update when needed, hide when done. Avo
 
 **Popup window styles**: `WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW`. The `WS_EX_TRANSPARENT` flag ensures mouse events pass through — critical for status popup which appears during drag. `WS_EX_TOOLWINDOW` prevents it from appearing in Alt-Tab.
 
+**Popup window creation**: Raw `CreateWindowExW` in `App::resumed()`, after overlay window creation. Returns an HWND stored as `popup_hwnd` on `App`. Not a winit `Window` — avoids double event dispatch and gives direct HWND control for `UpdateLayeredWindow`. The popup has no input handling (all events pass through via `WS_EX_TRANSPARENT`), so no winit event routing needed.
+
+**App struct additions** (in `overlay.rs`):
+```rust
+pub struct App {
+    // ... existing fields ...
+    popup_hwnd: Option<HWND>,           // raw Win32 handle
+    popup_manager: PopupManager,        // state machine
+    popup_renderer: GdiRenderer,        // GDI drawing context
+}
+```
+
 ```
 App (winit event loop)
-├── overlay_window  (fullscreen transparent, existing)
-├── popup_window    (small, WS_EX_TRANSPARENT mouse-passthrough, visible only when active) [NEW]
+├── overlay_window  (fullscreen transparent, existing winit Window)
+├── popup_hwnd      (raw HWND, CreateWindowExW, no winit) [NEW]
 │
 ├── popup_manager: PopupManager  [NEW]
 │   ├── active_popup: Option<PopupContent>
@@ -25,33 +37,34 @@ App (winit event loop)
 └── popup_renderer: GdiRenderer  [NEW]
     ├── mem_dc: HDC (memory DC for double-buffering)
     ├── mem_bitmap: HBITMAP
-    ├── font_normal: HFONT (Segoe UI 14px)
-    ├── font_key: HFONT (Segoe UI 13px semibold)
-    ├── font_desc: HFONT (Segoe UI 13px regular)
-    └── bg_brush: HBRUSH
+    ├── font_normal: HFONT (Segoe UI 14px FW_MEDIUM)
+    ├── font_key: HFONT (Segoe UI 13px FW_SEMIBOLD)
+    └── font_desc: HFONT (Segoe UI 13px FW_NORMAL)
 ```
 
 ### GDI Initialization (once, at popup window creation)
 
-1. `CreateCompatibleDC` -> memory DC for off-screen rendering
-2. `CreateDIBSection` -> BGRA pixel buffer matching popup size
-3. `CreateFontW` x3 -> Segoe UI at specified sizes/weights
-4. Render pipeline: clear -> `RoundRect` background -> `DrawTextW` text -> `BitBlt` to window
+> **Cargo.toml**: All required GDI APIs (`CreateCompatibleDC`, `CreateDIBSection`, `CreateFontW`, `RoundRect`, `DrawTextW`, `SelectObject`, `DeleteObject`, `DeleteDC`, `UpdateLayeredWindow`) are in `Win32_Graphics_Gdi` which is already enabled. `GetCursorPos` + `MonitorFromPoint` + `GetMonitorInfoW` are in `Win32_UI_WindowsAndMessaging` (also enabled). No Cargo.toml changes needed.
 
-Shadow: layered semi-transparent `RoundRect` drawn offset behind the card (~2-3 layers at increasing alpha).
+1. `CreateCompatibleDC` -> memory DC for off-screen rendering
+2. `CreateDIBSection` -> BGRA pixel buffer matching popup size (with alpha channel for shadow)
+3. `CreateFontW` x3 -> Segoe UI at specified sizes/weights
+4. Render pipeline: clear DIB -> paint shadow layers (offset RoundRect with per-pixel alpha) -> paint card background -> `DrawTextW` text -> `UpdateLayeredWindow` with `ULW_ALPHA`
+
+> **Compositing**: Popup uses `UpdateLayeredWindow` + `ULW_ALPHA` (per-pixel alpha from DIB), same pattern as the overlay window. This enables semi-transparent shadow rendering. NOT `SetLayeredWindowAttributes(LWA_COLORKEY)` which only supports binary transparency.
 
 ### Cross-Platform Strategy (v0.3)
 
 ```
 src/popup/
     mod.rs          — PopupManager, AnimationState, PopupContent (shared)
-    renderer.rs     — trait Renderer { draw_card(), draw_text() }
+    renderer.rs     — trait PopupRenderer { draw_card(), draw_text() }
     gdi_renderer.rs — GDI implementation (#[cfg(windows)])
     // renderer_mac.rs — CoreGraphics (v0.3)
     // renderer_lin.rs — Cairo (v0.3)
 ```
 
-> **Cross-platform note**: GDI is Windows-only. v0.3 will replace with platform-specific renderers behind the `Renderer` trait. Popup logic (animation, state, layout) is platform-independent. v0.3 renderer files will likely be simpler than GDI — CoreGraphics and Cairo both have native rounded rect + text APIs.
+> **Cross-platform note**: GDI is Windows-only. v0.3 will replace with platform-specific renderers behind the `PopupRenderer` trait. Popup logic (animation, state, layout) is platform-independent. v0.3 renderer files will likely be simpler than GDI — CoreGraphics and Cairo both have native rounded rect + text APIs.
 
 ---
 
@@ -100,10 +113,10 @@ Key behavior: continuous toggles during slide-in do NOT interrupt animation. Onl
 Pure function, testable:
 
 ```rust
-fn spring_position(elapsed_secs: f64, omega_n: f64, zeta: f64, target: f64) -> f64
+fn spring_position(elapsed_secs: f64, start: f64, target: f64, omega_n: f64, zeta: f64) -> f64
 ```
 
-Returns Y offset. At t=0, returns start position (-60). As t->infinity, returns 0 (target).
+Returns Y offset. At t=0, returns `start` (-60.0). As t->infinity, returns `target` (0.0). All params explicit — no magic numbers.
 
 ---
 
@@ -208,7 +221,7 @@ slide-out complete -> Hidden
 **Trigger**: modifier + VK_OEM_3 (backtick) both held
 **Position**: cursor's monitor, centered (both H and V)
 
-**Display content** (static, built at startup):
+**Display content** (hardcoded for v0.2, built from `AppConfig` modifier name at startup):
 ```
 Alt + drag          Draw
 1                   Pin
@@ -216,6 +229,7 @@ Alt + drag          Draw
 Esc                 Clear
 Alt + `             Help
 ```
+> **Data source**: Hardcoded constant in `PopupManager::new()`. Uses `config.modifier_name` to format "Alt + drag" / "Ctrl + drag" etc. v0.4+ may make this configurable.
 
 **Lifecycle**:
 ```
@@ -231,12 +245,29 @@ No hold timer. Pure hold-to-show behavior. Mutually exclusive with status popup 
 
 ### New InputEvents
 
+Add to existing `InputEvent` enum in `state.rs`:
 ```rust
-InputEvent::ToggleHelp,   // modifier + ` pressed
-InputEvent::HideHelp,     // modifier or ` released
+pub enum InputEvent {
+    // ... existing variants ...
+    ToggleHelp,   // modifier + ` pressed
+    HideHelp,     // modifier or ` released
+}
 ```
 
-Detection in `decide_keyboard`: check VK_OEM_3 combined with modifier state.
+### decide_keyboard Changes (hook.rs)
+
+Add VK_OEM_3 detection alongside existing digit key handling:
+```rust
+// In decide_keyboard(), after digit key handling:
+if vk_code == 0xC0 && !is_up {
+    return Some(InputEvent::ToggleHelp);
+}
+if (vk_code == 0xC0 || is_modifier) && is_up {
+    return Some(InputEvent::HideHelp);
+}
+```
+
+> **Note**: `HideHelp` fires on release of EITHER the modifier OR backtick. This means releasing the modifier while holding backtick also hides the cheatsheet, which is correct — the modifier must be held for the shortcut to be "active".
 
 > **Layout limitation**: VK_OEM_3 (0xC0) is the backtick key on US layout. On other layouts (e.g. German, French), this physical key produces a different character. This is a known limitation; the shortcut uses the physical key position, not the character. Same approach as VS Code and other tools.
 
@@ -318,7 +349,7 @@ fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
     // NEW: popup animation tick + render
     if self.popup_manager.needs_frame() {
         self.popup_manager.tick();
-        self.popup_renderer.render(&self.popup_manager, &self.popup_window);
+        self.popup_renderer.render(&self.popup_manager, self.popup_hwnd);
     }
 
     // Existing: window visibility
@@ -344,7 +375,7 @@ Two windows, fully independent visibility.
 src/popup/
     mod.rs          — PopupManager, PopupContent, PopupPhase
     renderer.rs     — trait PopupRenderer
-    gdi_renderer.rs — GDI implementation (#[cfg(windows)])
+    gdi_renderer.rs — GDI implementation (#[cfg(windows)], implements Drop for GDI cleanup)
     animation.rs    — Spring animation math (pure functions, testable)
 ```
 
