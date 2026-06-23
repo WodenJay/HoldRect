@@ -6,6 +6,7 @@ mod autostart;
 mod state;
 mod overlay;
 mod tray;
+mod popup;
 #[cfg(windows)]
 mod hook;
 
