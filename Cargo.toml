@@ -12,7 +12,6 @@ serde = { version = "1", features = ["derive"] }
 dirs = "6"
 
 tray-icon = "0.14"
-image = { version = "0.25", default-features = false, features = ["png"] }
 windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",

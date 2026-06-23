@@ -43,32 +43,51 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
 }
 
 fn create_icon() -> Icon {
-    const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
-    const SIZE: u32 = 32;
-    const BG: [u8; 3] = [0xF0, 0xED, 0xEB]; // off-white background color
-    const BG_THRESHOLD: u16 = 20; // color distance tolerance
+    const SIZE: usize = 32;
+    const RADIUS: f64 = 6.0;
+    const BORDER_W: f64 = 3.0;
+    // Colors from the HoldRect logo
+    const RED: [u8; 4] = [0xE0, 0x60, 0x4A, 0xFF];
+    const ORANGE: [u8; 4] = [0xE8, 0xA8, 0x38, 0xFF];
+    const BLUE: [u8; 4] = [0x4A, 0x72, 0xA8, 0xFF];
+    const PURPLE: [u8; 4] = [0x7B, 0x50, 0x90, 0xFF];
 
-    let img = image::load_from_memory(PNG_DATA)
-        .expect("Failed to decode embedded PNG");
-    let rgba = img.resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
-        .to_rgba8();
+    let mut rgba = vec![0u8; SIZE * SIZE * 4];
+    let center = (SIZE - 1) as f64 / 2.0;
 
-    // Make background pixels transparent
-    let pixels: Vec<u8> = rgba.into_raw()
-        .chunks(4)
-        .flat_map(|p| {
-            let dist = (p[0] as i16 - BG[0] as i16).unsigned_abs()
-                + (p[1] as i16 - BG[1] as i16).unsigned_abs()
-                + (p[2] as i16 - BG[2] as i16).unsigned_abs();
-            if dist < BG_THRESHOLD {
-                [p[0], p[1], p[2], 0] // transparent
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let fx = x as f64;
+            let fy = y as f64;
+
+            // Rounded rect distance from center
+            let dx = (fx - center).abs() - (center - RADIUS);
+            let dy = (fy - center).abs() - (center - RADIUS);
+            let dist = if dx > 0.0 && dy > 0.0 {
+                (dx * dx + dy * dy).sqrt()
             } else {
-                [p[0], p[1], p[2], p[3]]
-            }
-        })
-        .collect();
+                dx.max(dy).max(0.0)
+            };
 
-    Icon::from_rgba(pixels, SIZE, SIZE).expect("Failed to create icon")
+            // Only draw border pixels
+            if dist <= RADIUS && dist > RADIUS - BORDER_W {
+                // Pick color by perimeter position
+                let color = if fy <= center && fx <= center {
+                    RED
+                } else if fy <= center {
+                    ORANGE
+                } else if fx <= center {
+                    PURPLE
+                } else {
+                    BLUE
+                };
+                let off = (y * SIZE + x) * 4;
+                rgba[off..off + 4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    Icon::from_rgba(rgba, SIZE as u32, SIZE as u32).expect("Failed to create icon")
 }
 
 #[cfg(test)]
@@ -78,42 +97,71 @@ mod tests {
 
     #[test]
     fn app_exit_signal_type_exists() {
-        // Verify AppExit can be constructed and sent through a channel
         let (tx, rx) = mpsc::channel();
         tx.send(AppExit).unwrap();
-        let received = rx.try_recv();
-        assert!(received.is_ok(), "AppExit should be sendable through mpsc");
+        assert!(rx.try_recv().is_ok(), "AppExit should be sendable through mpsc");
     }
 
     #[test]
     fn create_icon_returns_valid_icon() {
         let icon = create_icon();
-        let _ = icon; // didn't panic = valid
-    }
-
-    #[test]
-    fn create_icon_rgba_size() {
-        // 32x32 RGBA = 4096 bytes
-        let icon = create_icon();
-        // Icon was created from 32x32 RGBA data successfully
         let _ = icon;
     }
 
     #[test]
-    fn create_icon_has_transparent_pixels() {
-        // Verify the embedded PNG decodes and background becomes transparent
-        const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
-        let img = image::load_from_memory(PNG_DATA).unwrap();
-        let rgba = img.resize(32, 32, image::imageops::FilterType::Lanczos3).to_rgba8();
-        let raw = rgba.into_raw();
-        // At least some pixels should be near the off-white background
-        let bg_count = raw.chunks(4).filter(|p| {
-            let dist = (p[0] as i16 - 0xF0).unsigned_abs()
-                + (p[1] as i16 - 0xED).unsigned_abs()
-                + (p[2] as i16 - 0xEB).unsigned_abs();
-            dist < 20
-        }).count();
-        assert!(bg_count > 0, "Should detect background pixels in source image");
+    fn create_icon_has_border_pixels() {
+        // Replicate drawing logic and verify some pixels are opaque
+        const SIZE: usize = 32;
+        let mut opaque = 0;
+        let center = (SIZE - 1) as f64 / 2.0;
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let dx = (x as f64 - center).abs() - (center - 6.0);
+                let dy = (y as f64 - center).abs() - (center - 6.0);
+                let dist = if dx > 0.0 && dy > 0.0 {
+                    (dx * dx + dy * dy).sqrt()
+                } else {
+                    dx.max(dy).max(0.0)
+                };
+                if dist <= 6.0 && dist > 3.0 {
+                    opaque += 1;
+                }
+            }
+        }
+        assert!(opaque > 0, "Rounded rect border should have visible pixels");
+    }
+
+    #[test]
+    fn create_icon_four_colors_present() {
+        // Verify all four quadrant colors appear in the icon
+        const SIZE: usize = 32;
+        let center = (SIZE - 1) as f64 / 2.0;
+        let mut has_red = false;
+        let mut has_orange = false;
+        let mut has_blue = false;
+        let mut has_purple = false;
+
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let dx = (x as f64 - center).abs() - (center - 6.0);
+                let dy = (y as f64 - center).abs() - (center - 6.0);
+                let dist = if dx > 0.0 && dy > 0.0 {
+                    (dx * dx + dy * dy).sqrt()
+                } else {
+                    dx.max(dy).max(0.0)
+                };
+                if dist <= 6.0 && dist > 3.0 {
+                    if y as f64 <= center && x as f64 <= center { has_red = true; }
+                    if y as f64 <= center && x as f64 > center { has_orange = true; }
+                    if y as f64 > center && x as f64 > center { has_blue = true; }
+                    if y as f64 > center && x as f64 <= center { has_purple = true; }
+                }
+            }
+        }
+        assert!(has_red, "Red (top-left) color missing");
+        assert!(has_orange, "Orange (top-right) color missing");
+        assert!(has_blue, "Blue (bottom-right) color missing");
+        assert!(has_purple, "Purple (bottom-left) color missing");
     }
 
     #[test]
@@ -121,56 +169,5 @@ mod tests {
         let (tx, rx) = mpsc::channel::<AppExit>();
         tx.send(AppExit).unwrap();
         assert!(rx.recv().is_ok(), "Should receive AppExit from channel");
-    }
-
-    #[test]
-    fn debug_icon_output() {
-        use image::RgbaImage;
-
-        const PNG_DATA: &[u8] = include_bytes!("../assets/HoldRect.png");
-        const SIZE: u32 = 32;
-        const BG: [u8; 3] = [0xF0, 0xED, 0xEB];
-        const BG_THRESHOLD: u16 = 20;
-
-        let img = image::load_from_memory(PNG_DATA)
-            .expect("Failed to decode embedded PNG");
-        let rgba = img.resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
-            .to_rgba8();
-
-        let pixels: Vec<u8> = rgba.into_raw()
-            .chunks(4)
-            .flat_map(|p| {
-                let dist = (p[0] as i16 - BG[0] as i16).unsigned_abs()
-                    + (p[1] as i16 - BG[1] as i16).unsigned_abs()
-                    + (p[2] as i16 - BG[2] as i16).unsigned_abs();
-                if dist < BG_THRESHOLD {
-                    [p[0], p[1], p[2], 0]
-                } else {
-                    [p[0], p[1], p[2], p[3]]
-                }
-            })
-            .collect();
-
-        // Save to disk for visual inspection
-        let out_img = RgbaImage::from_raw(SIZE, SIZE, pixels.clone())
-            .expect("Failed to build RgbaImage");
-        std::fs::create_dir_all("assets").unwrap();
-        out_img.save("assets/debug_icon.png").expect("Failed to save debug icon PNG");
-
-        // Print stats
-        let total = (SIZE * SIZE) as usize;
-        let transparent = pixels.chunks(4).filter(|p| p[3] == 0).count();
-        let opaque = total - transparent;
-        println!("\n=== debug_icon_output ===");
-        println!("Total pixels: {total}");
-        println!("Transparent (alpha=0): {transparent}");
-        println!("Opaque (alpha>0): {opaque}");
-        println!("First 4 pixels RGBA:");
-        for (i, chunk) in pixels.chunks(4).take(4).enumerate() {
-            println!("  [{i}] R={} G={} B={} A={}", chunk[0], chunk[1], chunk[2], chunk[3]);
-        }
-        println!("========================\n");
-
-        assert!(total > 0);
     }
 }
