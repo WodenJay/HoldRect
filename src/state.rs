@@ -38,37 +38,75 @@ impl Default for AppState {
     }
 }
 
+fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i32, i32, i32) {
+    let x0 = start.0.min(current.0);
+    let y0 = start.1.min(current.1);
+    let x1 = start.0.max(current.0);
+    let y1 = start.1.max(current.1);
+    (x0, y0, x1, y1)
+}
+
 /// Pure state transition function. No side effects.
 pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
-    let drawing = match (&state.drawing, event) {
+    let (drawing, pinned_active, pinned_rects) = match (&state.drawing, event) {
+        // --- DigitPressed(1) toggle (only in Armed or Drawing, i.e. modifier held) ---
+        (DrawingState::Armed, InputEvent::DigitPressed(1)) => {
+            (state.drawing.clone(), !state.pinned_active, state.pinned_rects.clone())
+        }
+        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(1)) => {
+            (state.drawing.clone(), !state.pinned_active, state.pinned_rects.clone())
+        }
+
+        // --- EscapePressed: clear all pinned rects ---
+        (_, InputEvent::EscapePressed) => {
+            let drawing = match &state.drawing {
+                DrawingState::Drawing { .. } => DrawingState::Armed,
+                other => other.clone(),
+            };
+            (drawing, false, Vec::new())
+        }
+
+        // --- Existing transitions (pinned_active/pinned_rects unchanged unless noted) ---
+
         // Idle -> Armed on modifier press
         (DrawingState::Idle, InputEvent::ModifierChanged { pressed: true }) => {
-            DrawingState::Armed
+            (DrawingState::Armed, state.pinned_active, state.pinned_rects.clone())
         }
         // Armed -> Drawing on mouse down
         (DrawingState::Armed, InputEvent::MouseButtonDown { x, y }) => {
-            DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }
+            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.pinned_rects.clone())
         }
         // Drawing: update current position on mouse move
         (DrawingState::Drawing { start, .. }, InputEvent::MouseMove { x, y }) => {
-            DrawingState::Drawing { start: *start, current: (*x, *y) }
+            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.pinned_rects.clone())
         }
-        // Drawing -> Armed on mouse up (overlay hides, can re-draw)
-        (DrawingState::Drawing { .. }, InputEvent::MouseButtonUp { .. }) => {
-            DrawingState::Armed
+        // Drawing -> Armed on mouse up
+        (DrawingState::Drawing { start, .. }, InputEvent::MouseButtonUp { x, y }) => {
+            let final_current = (*x, *y);
+            let mut rects = state.pinned_rects.clone();
+            if state.pinned_active {
+                let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
+                rects.push((x0, y0, x1, y1));
+            }
+            (DrawingState::Armed, false, rects)
         }
         // Armed -> Idle on modifier release
         (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => {
-            DrawingState::Idle
+            (DrawingState::Idle, false, state.pinned_rects.clone())
         }
-        // Drawing -> Idle on modifier release (cancel draw)
-        (DrawingState::Drawing { .. }, InputEvent::ModifierChanged { pressed: false }) => {
-            DrawingState::Idle
+        // Drawing -> Idle on modifier release
+        (DrawingState::Drawing { start, current }, InputEvent::ModifierChanged { pressed: false }) => {
+            let mut rects = state.pinned_rects.clone();
+            if state.pinned_active {
+                let (x0, y0, x1, y1) = normalize_rect(*start, *current);
+                rects.push((x0, y0, x1, y1));
+            }
+            (DrawingState::Idle, false, rects)
         }
         // All other combinations: no state change
-        _ => state.drawing.clone(),
+        _ => (state.drawing.clone(), state.pinned_active, state.pinned_rects.clone()),
     };
-    AppState { drawing, ..Default::default() }
+    AppState { drawing, pinned_rects, pinned_active }
 }
 
 #[cfg(test)]
@@ -362,5 +400,186 @@ mod tests {
         let state = AppState::default();
         assert!(state.pinned_rects.is_empty());
         assert!(!state.pinned_active);
+    }
+
+    // --- Pinned mode: DigitPressed toggle ---
+
+    #[test]
+    fn armed_digit_1_toggles_pinned_active() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        assert!(next.pinned_active);
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    #[test]
+    fn armed_digit_1_toggle_off() {
+        let state = AppState { drawing: DrawingState::Armed, pinned_active: true, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        assert!(!next.pinned_active);
+    }
+
+    #[test]
+    fn drawing_digit_1_toggles_pinned_active() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        assert!(next.pinned_active);
+        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+    }
+
+    #[test]
+    fn idle_digit_1_is_noop() {
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        assert!(!next.pinned_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn digit_other_than_1_is_ignored() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        assert!(!next.pinned_active);
+    }
+
+    // --- Pinned mode: mouse up with pinned_active ---
+
+    #[test]
+    fn drawing_mouse_up_pinned_pushes_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert_eq!(next.drawing, DrawingState::Armed);
+        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+        assert!(!next.pinned_active, "pinned_active resets after mouse up");
+    }
+
+    #[test]
+    fn drawing_mouse_up_pinned_normalizes_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (50, 80), current: (10, 20) },
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 10, y: 20 });
+        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+    }
+
+    #[test]
+    fn drawing_mouse_up_not_pinned_clears_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: false,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert_eq!(next.drawing, DrawingState::Armed);
+        assert!(next.pinned_rects.is_empty());
+    }
+
+    // --- Pinned mode: multiple rects accumulate ---
+
+    #[test]
+    fn multiple_pinned_rects_accumulate() {
+        let mut state = AppState::default();
+        // First rect: modifier -> toggle -> draw -> mouse up
+        state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
+        state = process_event(&state, &InputEvent::DigitPressed(1));
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 10, y: 10 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 50 });
+        assert_eq!(state.pinned_rects.len(), 1);
+        assert_eq!(state.pinned_rects[0], (10, 10, 50, 50));
+
+        // Second rect: still modifier held, draw another (pinned_active reset, need to toggle again)
+        state = process_event(&state, &InputEvent::DigitPressed(1));
+        state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
+        state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
+        assert_eq!(state.pinned_rects.len(), 2);
+        assert_eq!(state.pinned_rects[1], (100, 100, 200, 200));
+    }
+
+    // --- Pinned mode: per-rect reset ---
+
+    #[test]
+    fn pinned_active_resets_after_mouse_up() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
+        assert!(!next.pinned_active);
+    }
+
+    // --- EscapePressed ---
+
+    #[test]
+    fn escape_clears_pinned_rects() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            pinned_rects: vec![(10, 20, 50, 80), (100, 100, 200, 200)],
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::EscapePressed);
+        assert!(next.pinned_rects.is_empty());
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    #[test]
+    fn escape_during_draw_cancels_and_clears_pinned() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_rects: vec![(0, 0, 100, 100)],
+            pinned_active: true,
+        };
+        let next = process_event(&state, &InputEvent::EscapePressed);
+        assert_eq!(next.drawing, DrawingState::Armed);
+        assert!(next.pinned_rects.is_empty());
+        assert!(!next.pinned_active);
+    }
+
+    #[test]
+    fn escape_in_idle_clears_pinned_rects() {
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            pinned_rects: vec![(10, 20, 50, 80)],
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::EscapePressed);
+        assert!(next.pinned_rects.is_empty());
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Modifier release resets pinned_active ---
+
+    #[test]
+    fn modifier_release_resets_pinned_active() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert!(!next.pinned_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn drawing_modifier_release_with_pinned_pushes_rect() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert_eq!(next.pinned_rects, vec![(10, 20, 50, 80)]);
+        assert!(!next.pinned_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
     }
 }
