@@ -37,6 +37,7 @@ fn main() {
     let (event_loop, proxy) = create_event_loop();
     let (input_tx, input_rx) = mpsc::channel::<InputEvent>();
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
+    let (_config_tx, config_rx) = mpsc::channel::<crate::config::AppConfig>();
 
     // Start Win32 input hook listener (replaces rdev)
     let config = crate::config::AppConfig::load();
@@ -50,7 +51,7 @@ fn main() {
         std::process::exit(0);
     });
 
-    run_overlay(event_loop, input_rx, config.border_width, config.color_mode, config.modifier_name.clone());
+    run_overlay(event_loop, input_rx, config_rx, config.border_width, config.color_mode, config.modifier_name.clone());
     std::process::exit(0);
 }
 

@@ -14,6 +14,7 @@ use winit::platform::windows::WindowAttributesExtWindows;
 #[cfg(windows)]
 use windows::Win32::Foundation::HWND;
 
+use crate::config::AppConfig;
 use crate::config::ColorMode;
 use crate::popup::PopupManager;
 #[cfg(windows)]
@@ -127,6 +128,8 @@ pub struct App {
     input_rx: Receiver<InputEvent>,
     border_width: i32,
     color_mode: ColorMode,
+    modifier_name: String,
+    config_rx: Receiver<AppConfig>,
     #[cfg(windows)]
     dib_cache: Option<DibCache>,
     // Popup system
@@ -150,13 +153,15 @@ impl Drop for App {
 }
 
 impl App {
-    pub fn new(input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode, modifier_name: String) -> Self {
+    pub fn new(input_rx: Receiver<InputEvent>, config_rx: Receiver<AppConfig>, border_width: i32, color_mode: ColorMode, modifier_name: String) -> Self {
         Self {
             window: None,
             state: AppState::default(),
             input_rx,
             border_width,
             color_mode,
+            modifier_name: modifier_name.clone(),
+            config_rx,
             #[cfg(windows)]
             dib_cache: None,
             #[cfg(windows)]
@@ -253,6 +258,17 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Poll for config changes (hot-reload)
+        while let Ok(new_config) = self.config_rx.try_recv() {
+            self.border_width = new_config.border_width;
+            self.color_mode = new_config.color_mode;
+            if new_config.modifier_name != self.modifier_name {
+                self.modifier_name = new_config.modifier_name.clone();
+                self.popup_manager.update_modifier_name(&self.modifier_name);
+            }
+            crate::hook::update_modifier_codes(new_config.modifier_vk_codes);
+        }
+
         // Drain all pending input events
         while let Ok(event) = self.input_rx.try_recv() {
             let new_state = process_event(&self.state, &event);
@@ -620,8 +636,8 @@ pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
 }
 
 /// Run the overlay event loop on the main thread. Blocks until exit.
-pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, border_width: i32, color_mode: ColorMode, modifier_name: String) {
-    let mut app = App::new(input_rx, border_width, color_mode, modifier_name);
+pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, config_rx: Receiver<AppConfig>, border_width: i32, color_mode: ColorMode, modifier_name: String) {
+    let mut app = App::new(input_rx, config_rx, border_width, color_mode, modifier_name);
     event_loop.run_app(&mut app).expect("Event loop error");
 }
 
