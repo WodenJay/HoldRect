@@ -158,7 +158,7 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
 | Breakpoint | Width | Changes |
 |------------|-------|---------|
 | Mobile | < 768px | Hero stacks, features 1-up, nav simplified, text sizes reduce (h1 → 36px, h2 → 28px, h3 → 22px) |
-| Tablet | 768–1024px | Features 3-up (cards have min-width 280px, flex-wrap), hero stays 6/6 |
+| Tablet | 768–1024px | Features 2-up (same as desktop), hero stays 6/6 |
 | Desktop | > 1024px | Full layout as designed |
 | Wide | > 1440px | Same as desktop, more breathing room, content capped at 1200px |
 
