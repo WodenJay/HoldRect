@@ -163,9 +163,29 @@ git add src/mem_report.rs src/main.rs Cargo.toml
 git commit -m "feat(mem): add --mem-report flag for baseline memory measurement"
 ```
 
+- [ ] **Step 9: Record BASELINE (关键步骤 — 必须在Task 2之前执行)**
+
+```bash
+cargo build --release
+./target/release/holdrect.exe --mem-report
+```
+
+**记录输出的 Working Set 和 Pagefile 数字为 BASELINE。** 用当前未优化的Cargo.toml编译。此数字是后续所有优化的对比基准。
+
+Expected output类似:
+```
+HoldRect Memory Report:
+  Working Set:  XXXX KB (X.X MB)
+  Pagefile:     XXXX KB (X.X MB)
+```
+
+将BASELINE数字记录在commit message或注释中, 确保可追溯。
+
 ---
 
 ### Task 2: Compile-time optimization
+
+**前置条件: BASELINE已在Task 1 Step 9记录。如果BASELINE < 3MB, 仍执行编译优化(免费收益)但跳过Task 8。**
 
 **Files:**
 - Modify: `Cargo.toml:4-6` (add `[profile.release]` section)
@@ -191,11 +211,14 @@ opt-level = "s"
 Run: `cargo test --lib`
 Expected: All tests PASS
 
-- [ ] **Step 3: Build release and measure**
+- [ ] **Step 3: Build release and compare with BASELINE**
 
-Run: `cargo build --release`
-Run: `./target/release/holdrect.exe --mem-report`
-Expected: Print Working Set and Pagefile numbers. Compare with baseline (first run without profile = baseline).
+```bash
+cargo build --release
+./target/release/holdrect.exe --mem-report
+```
+
+**对比输出数字与Task 1 Step 9记录的BASELINE。** 记录编译优化带来的差异(Working Set减少XKB, Pagefile减少YKB)。
 
 - [ ] **Step 4: Commit**
 
@@ -807,10 +830,11 @@ git commit -m "feat(main): wire config watcher thread for hot-reload"
 **Interfaces:**
 - Conditional: only execute if baseline > 3MB after compile-time optimization
 
-- [ ] **Step 1: Measure baseline and post-compile memory**
+- [ ] **Step 1: Compare BASELINE with 3MB threshold**
 
-Run: `cargo build --release && ./target/release/holdrect.exe --mem-report`
-Record numbers. If Working Set < 3MB, SKIP this task entirely and go to Task 9.
+Task 1 Step 9 记录的BASELINE Working Set数字决定是否执行本task:
+- BASELINE < 3MB → **SKIP Task 8**, 直接到 Task 9
+- BASELINE >= 3MB → 继续执行 Step 2+
 
 - [ ] **Step 2: If > 3MB — reduce clones in state machine**
 
@@ -843,10 +867,14 @@ git commit -m "perf: reduce memory footprint — DibCache idle release, reduce c
 Run: `cargo test --lib`
 Expected: All tests PASS
 
-- [ ] **Step 2: Build release and measure memory**
+- [ ] **Step 2: Build release and measure FINAL memory**
 
-Run: `cargo build --release && ./target/release/holdrect.exe --mem-report`
-Record final numbers.
+```bash
+cargo build --release
+./target/release/holdrect.exe --mem-report
+```
+
+**对比FINAL数字与BASELINE(Task 1 Step 9记录)。** 记录总优化量: Working Set减少XKB (Y%), Pagefile减少XKB (Y%)。
 
 - [ ] **Step 3: Manual end-to-end test**
 
