@@ -355,7 +355,8 @@ h3 {
 }
 
 .install__link:hover {
-  color: var(--color-on-primary);
+  color: #e0a08a;
+  text-decoration: underline;
 }
 
 /* --- 10. CTA Band (Coral) --- */
@@ -367,6 +368,9 @@ h3 {
 
 .cta__heading {
   color: var(--color-on-primary);
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
   margin-bottom: var(--space-md);
 }
 
@@ -440,7 +444,14 @@ h3 {
   outline-offset: 2px;
 }
 
-/* --- 13. Responsive — Mobile (< 768px) --- */
+/* --- 13. Reduced Motion --- */
+@media (prefers-reduced-motion: reduce) {
+  .hero__gif {
+    content: url("assets/holdrect-demo-static.png");
+  }
+}
+
+/* --- 14. Responsive — Mobile (< 768px) --- */
 @media (max-width: 767px) {
   h1 {
     font-size: 36px;
