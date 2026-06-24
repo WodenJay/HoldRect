@@ -3,3 +3,4 @@
 skills-lock.json
 target/
 .worktrees/
+.playwright-mcp

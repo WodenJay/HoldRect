@@ -536,6 +536,7 @@ h3 {
 .hero-brand {
   background-color: var(--color-canvas);
   padding: 0;
+  margin: -16px 0;
   display: flex;
   justify-content: center;
 }
@@ -564,7 +565,7 @@ h3 {
   to   { fill-opacity: 1; }
 }
 
-.hero-brand:hover .hero-brand__text {
+.hero-brand__svg:hover .hero-brand__text {
   fill-opacity: 0;
 }
 
