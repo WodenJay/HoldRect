@@ -5,18 +5,18 @@ pub mod gdi_renderer;
 use std::time::Instant;
 use crate::state::{AppState, InputEvent};
 
-const SLIDE_IN_DURATION_MS: u64 = 400;
+const SLIDE_IN_DURATION_MS: u64 = 350;
 const HOLD_DURATION_MS: u64 = 1000;
-const SLIDE_OUT_DURATION_MS: u64 = 300;
+const SLIDE_OUT_DURATION_MS: u64 = 200;
 const START_Y_OFFSET: f64 = -60.0;
 const TARGET_Y_OFFSET: f64 = 0.0;
 
 // Spring params: slide-in (slightly underdamped)
-const SLIDE_IN_OMEGA: f64 = 18.0;
-const SLIDE_IN_ZETA: f64 = 0.82;
+const SLIDE_IN_OMEGA: f64 = 20.0;
+const SLIDE_IN_ZETA: f64 = 0.78;
 
 // Spring params: slide-out (critically damped)
-const SLIDE_OUT_OMEGA: f64 = 22.0;
+const SLIDE_OUT_OMEGA: f64 = 26.0;
 const SLIDE_OUT_ZETA: f64 = 1.0;
 
 #[derive(Debug, Clone, PartialEq)]
