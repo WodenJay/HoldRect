@@ -25,12 +25,12 @@ A lightweight, always-on screen highlighter for recordings and presentations. Ze
 ### One-liner
 
 ```powershell
-irm https://raw.githubusercontent.com/<OWNER>/HoldRect/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WodenJay/HoldRect/main/install.ps1 | iex
 ```
 
 ### Manual
 
-1. Download `holdrect.exe` from [Releases](https://github.com/<OWNER>/HoldRect/releases/latest)
+1. Download `holdrect.exe` from [Releases](https://github.com/WodenJay/HoldRect/releases/latest)
 2. Run it — a tray icon appears, HoldRect is now listening
 3. To exit: right-click the tray icon → **Exit**
 
@@ -84,7 +84,7 @@ HoldRect's differentiators: rainbow flow animation, modifier+drag interaction, p
 
 ```bash
 # Clone
-git clone https://github.com/<OWNER>/HoldRect.git
+git clone https://github.com/WodenJay/HoldRect.git
 cd HoldRect
 
 # Build (Windows)
