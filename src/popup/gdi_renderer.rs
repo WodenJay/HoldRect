@@ -3,22 +3,22 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use super::{PopupManager, PopupContent};
 
-const STATUS_HEIGHT: i32 = 48;
-const STATUS_RADIUS: i32 = 12;
-const STATUS_PADDING_H: i32 = 24;
-const STATUS_TOP_MARGIN: i32 = 48;
+const STATUS_HEIGHT: i32 = 56;
+const STATUS_RADIUS: i32 = STATUS_HEIGHT / 2; // capsule
+const STATUS_PADDING_H: i32 = 28;
+const STATUS_TOP_MARGIN: i32 = 24;
 
-const CHEATSHEET_WIDTH: i32 = 320;
-const CHEATSHEET_ROW_HEIGHT: i32 = 32;
-const CHEATSHEET_PADDING_V: i32 = 20;
-const CHEATSHEET_RADIUS: i32 = 14;
-const CHEATSHEET_PADDING_H: i32 = 24;
+const CHEATSHEET_WIDTH: i32 = 360;
+const CHEATSHEET_ROW_HEIGHT: i32 = 38;
+const CHEATSHEET_PADDING_V: i32 = 24;
+const CHEATSHEET_RADIUS: i32 = 20;
+const CHEATSHEET_PADDING_H: i32 = 28;
 
 const BG_R: u8 = 255;
 const BG_G: u8 = 255;
 const BG_B: u8 = 255;
-const BG_A_STATUS: u8 = 230;
-const BG_A_CHEATSHEET: u8 = 240;
+const BG_A_STATUS: u8 = 255;   // fully opaque
+const BG_A_CHEATSHEET: u8 = 255; // fully opaque
 
 const SHADOW_COLOR: (u8, u8, u8) = (0, 0, 0);
 
@@ -64,9 +64,9 @@ impl GdiRenderer {
             let original_stock_bitmap = SelectObject(mem_dc, mem_bitmap);
             let original_stock_bitmap = HBITMAP(original_stock_bitmap.0);
 
-            let font_normal = create_font(16, FW_MEDIUM.0);
-            let font_key = create_font(15, FW_SEMIBOLD.0);
-            let font_desc = create_font(15, FW_NORMAL.0);
+            let font_normal = create_font(20, FW_SEMIBOLD.0);
+            let font_key = create_font(18, FW_SEMIBOLD.0);
+            let font_desc = create_font(17, FW_NORMAL.0);
 
             ReleaseDC(HWND::default(), screen_dc);
 
@@ -129,7 +129,7 @@ impl GdiRenderer {
         let (mon_left, mon_top, mon_right, mon_bottom) = monitor_rect;
         let mon_width = mon_right - mon_left;
         let mon_height = mon_bottom - mon_top;
-        let y_offset = manager.current_y_offset() as i32;
+        let y_offset = manager.current_y_offset().round() as i32;
 
         match manager.content() {
             PopupContent::Status => {
@@ -183,9 +183,8 @@ impl GdiRenderer {
             let x = mon_left + (mon_width - buf_w) / 2;
             let y = mon_top + STATUS_TOP_MARGIN + y_offset;
 
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
+            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
+            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
     }
 
@@ -248,9 +247,8 @@ impl GdiRenderer {
             let x = mon_left + (mon_width - buf_w) / 2;
             let y = mon_top + (mon_height - buf_h) / 2 + y_offset;
 
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
+            commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
+            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
     }
 }
@@ -273,7 +271,7 @@ unsafe fn create_font(size: i32, weight: u32) -> HFONT {
     CreateFontW(
         -size, 0, 0, 0, weight as i32, 0, 0, 0,
         DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32,
-        CLIP_DEFAULT_PRECIS.0 as u32, CLEARTYPE_QUALITY.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32, ANTIALIASED_QUALITY.0 as u32,
         DEFAULT_PITCH.0 as u32,
         windows::core::PCWSTR(face_name.as_ptr()),
     )
@@ -367,9 +365,10 @@ unsafe fn fix_text_alpha(pixels: *mut u8, buf_w: i32, buf_h: i32, rect: &RECT) {
 }
 
 /// Push pixels to the layered window. mem_dc already has mem_bitmap selected.
-unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32) {
+unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32, x: i32, y: i32) {
+    let dst = POINT { x, y };
+    let src = POINT { x: 0, y: 0 };
     let size = SIZE { cx: width, cy: height };
-    let point = POINT { x: 0, y: 0 };
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
@@ -377,15 +376,8 @@ unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32) {
         AlphaFormat: AC_SRC_ALPHA as u8,
     };
     let _ = UpdateLayeredWindow(
-        hwnd,
-        None,
-        Some(&point),
-        Some(&size),
-        mem_dc,
-        Some(&point),
-        COLORREF(0),
-        Some(&blend),
-        ULW_ALPHA,
+        hwnd, None, Some(&dst), Some(&size), mem_dc, Some(&src),
+        COLORREF(0), Some(&blend), ULW_ALPHA,
     );
 }
 
