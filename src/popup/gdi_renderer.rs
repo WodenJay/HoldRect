@@ -33,6 +33,7 @@ pub struct GdiRenderer {
     current_width: i32,
     current_height: i32,
     pixels: *mut u8,
+    is_shown: bool,
 }
 
 impl GdiRenderer {
@@ -81,6 +82,7 @@ impl GdiRenderer {
                 current_width: width,
                 current_height: height,
                 pixels,
+                is_shown: false,
             }
         }
     }
@@ -122,7 +124,10 @@ impl GdiRenderer {
 
     pub fn render(&mut self, manager: &PopupManager, monitor_rect: (i32, i32, i32, i32)) {
         if !manager.is_visible() {
-            unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+            if self.is_shown {
+                unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+                self.is_shown = false;
+            }
             return;
         }
 
@@ -184,7 +189,11 @@ impl GdiRenderer {
             let y = mon_top + STATUS_TOP_MARGIN + y_offset;
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            if !self.is_shown {
+                let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                self.is_shown = true;
+            }
         }
     }
 
@@ -248,7 +257,11 @@ impl GdiRenderer {
             let y = mon_top + STATUS_TOP_MARGIN + y_offset;
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            if !self.is_shown {
+                let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                self.is_shown = true;
+            }
         }
     }
 }
