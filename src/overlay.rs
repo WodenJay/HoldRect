@@ -488,6 +488,7 @@ fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
 /// Simulate multi-frame overlay state and return the number of times
 /// `show_window_topmost` should have been called.
 /// Models the Z-order enforcement policy.
+#[cfg(test)]
 fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
     let mut count = 0;
     for &(has_drawing, has_pinned) in frames {
