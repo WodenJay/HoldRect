@@ -110,11 +110,9 @@ cargo build --release
 
 Requires Rust 1.75+ and Windows 10+.
 
-## Contributing
+## Issues
 
-Contributions welcome. Open an issue first for large changes.
-
-For bug reports, include: Windows version, steps to reproduce, expected vs actual behavior.
+I built this project in my spare time because I needed it myself. HoldRect is only on windows now because I'm using windows. If you need a feature, find a bug or need Linux/MacOS, please open an issue. I will handle it if I have time.
 
 ## License
 
