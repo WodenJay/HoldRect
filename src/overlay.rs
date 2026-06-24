@@ -136,6 +136,7 @@ pub struct App {
     #[cfg(windows)]
     popup_renderer: Option<GdiRenderer>,
     popup_monitor_rect: (i32, i32, i32, i32), // cached at show time
+    overlay_shown: bool,
 }
 
 #[cfg(windows)]
@@ -165,6 +166,7 @@ impl App {
             #[cfg(windows)]
             popup_renderer: None,
             popup_monitor_rect: (0, 0, 1920, 1080),
+            overlay_shown: false,
         }
     }
 }
@@ -233,6 +235,17 @@ impl ApplicationHandler for App {
 
             self.popup_hwnd = Some(popup_hwnd);
             self.popup_renderer = Some(GdiRenderer::new(popup_hwnd));
+
+            // Make popup an owned window of overlay — it automatically stays
+            // above its owner in Z-order, no per-frame SetWindowPos needed.
+            {
+                use windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
+                use windows::Win32::UI::WindowsAndMessaging::GWLP_HWNDPARENT;
+                let overlay_hwnd = get_hwnd(self.window.as_ref().unwrap());
+                unsafe {
+                    SetWindowLongPtrW(popup_hwnd, GWLP_HWNDPARENT, overlay_hwnd.0 as _);
+                }
+            }
         }
     }
 
@@ -358,7 +371,10 @@ impl App {
                                  *start, *current, self.border_width, &self.color_mode, time_offset);
             }
 
-            show_window_topmost(window);
+            if !self.overlay_shown {
+                show_window_topmost(window);
+                self.overlay_shown = true;
+            }
             commit_dib(window, cache, width, height, wr.left, wr.top);
         }
     }
