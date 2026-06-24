@@ -8,7 +8,7 @@ use crate::state::{AppState, InputEvent};
 const SLIDE_IN_DURATION_MS: u64 = 350;
 const HOLD_DURATION_MS: u64 = 1000;
 const SLIDE_OUT_DURATION_MS: u64 = 200;
-const START_Y_OFFSET: f64 = -60.0;
+const START_Y_OFFSET: f64 = -96.0;
 const TARGET_Y_OFFSET: f64 = 0.0;
 
 // Spring params: slide-in (slightly underdamped)
@@ -28,7 +28,7 @@ pub enum PopupContent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PopupPhase {
     Hidden,
-    SlidingIn { started_at: Instant },
+    SlidingIn { started_at: Instant, from_y: f64 },
     Holding { started_at: Instant },
     SlidingOut { started_at: Instant, from_y: f64 },
 }
@@ -94,17 +94,21 @@ impl PopupManager {
         match &self.phase {
             PopupPhase::Hidden => {
                 self.content = PopupContent::Status;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now() };
+                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y: START_Y_OFFSET };
             }
-            PopupPhase::SlidingIn { .. } | PopupPhase::Holding { .. } => {
-                // Update text in place, reset hold timer
+            PopupPhase::SlidingIn { .. } => {
+                // Keep sliding-in animation, just update text — don't snap to Holding
+                self.content = PopupContent::Status;
+            }
+            PopupPhase::Holding { .. } => {
                 self.content = PopupContent::Status;
                 self.phase = PopupPhase::Holding { started_at: Instant::now() };
             }
             PopupPhase::SlidingOut { .. } => {
                 // Reverse: restart slide-in from current position
                 self.content = PopupContent::Status;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now() };
+                let from_y = self.current_y_offset();
+                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y };
             }
         }
     }
@@ -113,7 +117,7 @@ impl PopupManager {
         match &self.phase {
             PopupPhase::Hidden => {
                 self.content = PopupContent::Cheatsheet;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now() };
+                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y: START_Y_OFFSET };
             }
             PopupPhase::SlidingIn { .. } | PopupPhase::Holding { .. } => {
                 // Already showing — no-op for cheatsheet
@@ -126,7 +130,8 @@ impl PopupManager {
             }
             PopupPhase::SlidingOut { .. } => {
                 self.content = PopupContent::Cheatsheet;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now() };
+                let from_y = self.current_y_offset();
+                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y };
             }
         }
     }
@@ -147,7 +152,7 @@ impl PopupManager {
     pub fn tick(&mut self) {
         let now = Instant::now();
         let new_phase = match &self.phase {
-            PopupPhase::SlidingIn { started_at } => {
+            PopupPhase::SlidingIn { started_at, .. } => {
                 let elapsed = now.duration_since(*started_at).as_millis() as u64;
                 if elapsed >= SLIDE_IN_DURATION_MS {
                     Some(PopupPhase::Holding { started_at: now })
@@ -204,9 +209,9 @@ impl PopupManager {
     pub fn current_y_offset(&self) -> f64 {
         match &self.phase {
             PopupPhase::Hidden => START_Y_OFFSET,
-            PopupPhase::SlidingIn { started_at } => {
+            PopupPhase::SlidingIn { started_at, from_y } => {
                 let t = started_at.elapsed().as_secs_f64();
-                animation::spring_position(t, START_Y_OFFSET, TARGET_Y_OFFSET, SLIDE_IN_OMEGA, SLIDE_IN_ZETA)
+                animation::spring_position(t, *from_y, TARGET_Y_OFFSET, SLIDE_IN_OMEGA, SLIDE_IN_ZETA)
             }
             PopupPhase::Holding { .. } => TARGET_Y_OFFSET,
             PopupPhase::SlidingOut { started_at, from_y } => {
@@ -266,13 +271,14 @@ mod tests {
     // --- show_status from SlidingIn ---
 
     #[test]
-    fn show_status_from_sliding_in_updates_text_resets_timer() {
+    fn show_status_from_sliding_in_keeps_sliding_in() {
         let mut m = make_manager();
         m.show_status("Pinned");
         std::thread::sleep(std::time::Duration::from_millis(50));
         m.show_status("Pinned \u{00b7} Spotlight");
         assert_eq!(m.status_text, "Pinned \u{00b7} Spotlight");
-        assert!(matches!(m.phase, PopupPhase::Holding { .. }));
+        // Should stay SlidingIn — no snap to Holding
+        assert!(matches!(m.phase, PopupPhase::SlidingIn { .. }));
     }
 
     // --- show_status from SlidingOut ---
@@ -295,7 +301,7 @@ mod tests {
     fn tick_sliding_in_to_holding_after_duration() {
         let mut m = make_manager();
         m.show_status("Pinned");
-        m.phase = PopupPhase::SlidingIn { started_at: std::time::Instant::now() - std::time::Duration::from_millis(500) };
+        m.phase = PopupPhase::SlidingIn { started_at: std::time::Instant::now() - std::time::Duration::from_millis(500), from_y: START_Y_OFFSET };
         m.tick();
         assert!(matches!(m.phase, PopupPhase::Holding { .. }));
     }
