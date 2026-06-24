@@ -14,11 +14,11 @@ const CHEATSHEET_PADDING_V: i32 = 20;
 const CHEATSHEET_RADIUS: i32 = 14;
 const CHEATSHEET_PADDING_H: i32 = 24;
 
-const BG_R: u8 = 28;
-const BG_G: u8 = 28;
-const BG_B: u8 = 30;
-const BG_A_STATUS: u8 = 224;      // ~0.88
-const BG_A_CHEATSHEET: u8 = 235;  // ~0.92
+const BG_R: u8 = 255;
+const BG_G: u8 = 255;
+const BG_B: u8 = 255;
+const BG_A_STATUS: u8 = 230;
+const BG_A_CHEATSHEET: u8 = 240;
 
 const SHADOW_COLOR: (u8, u8, u8) = (0, 0, 0);
 
@@ -160,7 +160,7 @@ impl GdiRenderer {
             let card_y = shadow_margin;
 
             // Shadow layers
-            paint_shadow(self.pixels, buf_w, buf_h, card_x + 2, card_y + 2, popup_w, popup_h, STATUS_RADIUS, SHADOW_COLOR, 60);
+            paint_shadow(self.pixels, buf_w, buf_h, card_x + 2, card_y + 2, popup_w, popup_h, STATUS_RADIUS, SHADOW_COLOR, 55);
 
             // Card background
             paint_rounded_rect(self.pixels, buf_w, buf_h, card_x, card_y, popup_w, popup_h, STATUS_RADIUS, BG_R, BG_G, BG_B, BG_A_STATUS);
@@ -168,7 +168,7 @@ impl GdiRenderer {
             // Text
             SelectObject(self.mem_dc, self.font_normal);
             SetBkMode(self.mem_dc, TRANSPARENT);
-            SetTextColor(self.mem_dc, COLORREF(0x00FFFFFF)); // white
+            SetTextColor(self.mem_dc, COLORREF(0x001F1D1D)); // #1D1D1F BGR
             let mut text_wide: Vec<u16> = text.encode_utf16().collect();
             let mut text_rect = RECT {
                 left: card_x + STATUS_PADDING_H,
@@ -219,7 +219,7 @@ impl GdiRenderer {
                 // Key (left-aligned, semibold)
                 SelectObject(self.mem_dc, self.font_key);
                 SetBkMode(self.mem_dc, TRANSPARENT);
-                SetTextColor(self.mem_dc, COLORREF(0x00E5E5E5)); // #E5E5E5
+                SetTextColor(self.mem_dc, COLORREF(0x001F1D1D)); // #1D1D1F BGR
                 let mut key_w: Vec<u16> = key.encode_utf16().collect();
                 let mut key_rect = RECT {
                     left: card_x + CHEATSHEET_PADDING_H,
@@ -231,7 +231,7 @@ impl GdiRenderer {
 
                 // Desc (right-aligned, regular)
                 SelectObject(self.mem_dc, self.font_desc);
-                SetTextColor(self.mem_dc, COLORREF(0x00AEAEB2)); // #AEAEB2
+                SetTextColor(self.mem_dc, COLORREF(0x008B8686)); // #86868B BGR
                 let mut desc_w: Vec<u16> = desc.encode_utf16().collect();
                 let mut desc_rect = RECT {
                     left: card_x + popup_w / 2,
