@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          CARGO_VERSION=$(grep -m1 '^version\s*=' Cargo.toml | sed 's/.*"\([0-9.]*\)".*/\1/')
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Verify no placeholder remains
+        shell: bash
+        run: |
+          if grep -r '<OWNER>' . --include='*.ps1' --include='*.md' --include='*.yml' -l; then
+            echo "::error::<OWNER> placeholder found in tracked files. Replace with actual GitHub username."
+            exit 1
+          fi
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/holdrect.exe
