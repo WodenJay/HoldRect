@@ -8,8 +8,9 @@
 
 A lightweight, always-on screen highlighter for recordings and presentations. Zero mode switching, zero friction — just hold and drag.
 
-<!-- TODO: Replace with actual demo GIF once recorded -->
-<!-- Suggested: 5-second clip showing Alt+drag → rainbow rectangle → release → gone -->
+<p align="center">
+  <img src="assets/HoldRect_show.gif" alt="HoldRect demo" width="600">
+</p>
 
 ## Why HoldRect?
 
