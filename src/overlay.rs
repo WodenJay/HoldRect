@@ -315,6 +315,8 @@ impl App {
         if !has_drawing && !has_pinned {
             if self.overlay_shown {
                 window.set_visible(false);
+                #[cfg(windows)]
+                hide_from_alt_tab(window);
                 self.overlay_shown = false;
             }
             return;
