@@ -28,7 +28,6 @@ try {
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $tempFile -UseBasicParsing
 
     # Rename into place (overwrites existing)
-    if (Test-Path $InstallPath) { Remove-Item $InstallPath -Force }
     Move-Item -Path $tempFile -Destination $InstallPath -Force
 } catch {
     if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
