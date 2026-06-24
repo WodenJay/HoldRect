@@ -243,9 +243,9 @@ impl GdiRenderer {
                 fix_text_alpha(self.pixels, buf_w, buf_h, &desc_rect);
             }
 
-            // Position: centered on monitor
+            // Position: same as status popup (top center)
             let x = mon_left + (mon_width - buf_w) / 2;
-            let y = mon_top + (mon_height - buf_h) / 2 + y_offset;
+            let y = mon_top + STATUS_TOP_MARGIN + y_offset;
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
             let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
