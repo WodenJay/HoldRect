@@ -69,15 +69,15 @@ impl AppConfig {
         let Ok(content) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        Self::parse(&content)
+        Self::parse(&content).unwrap_or_default()
     }
 
-    pub(crate) fn parse(toml_str: &str) -> Self {
+    pub(crate) fn parse(toml_str: &str) -> Option<Self> {
         let raw: RawConfig = match toml::from_str(toml_str) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("Warning: config file malformed ({e}), using defaults");
-                return Self::default();
+                return None;
             }
         };
 
@@ -90,12 +90,12 @@ impl AppConfig {
             None => ColorMode::Solid { r: 255, g: 0, b: 0 },
         };
 
-        Self {
+        Some(Self {
             modifier_vk_codes,
             border_width,
             color_mode,
             modifier_name,
-        }
+        })
     }
 }
 
@@ -173,8 +173,9 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
             if name.eq_ignore_ascii_case("config.toml") {
                 let config_path = dir.join("config.toml");
                 if let Ok(content) = std::fs::read_to_string(&config_path) {
-                    let new_config = AppConfig::parse(&content);
-                    let _ = tx.send(new_config);
+                    if let Some(new_config) = AppConfig::parse(&content) {
+                        let _ = tx.send(new_config);
+                    }
                 }
                 break;
             }
@@ -291,7 +292,7 @@ mod tests {
             border_width = 8
             color = "rainbow"
         "#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x11, 0xA2, 0xA3]);
         assert_eq!(cfg.border_width, 8);
         assert_eq!(cfg.color_mode, ColorMode::Rainbow);
@@ -300,7 +301,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_modifier() {
         let toml_str = r#"modifier = "Shift""#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x10, 0xA0, 0xA1]);
         assert_eq!(cfg.border_width, 4);
         assert_eq!(
@@ -311,41 +312,41 @@ mod tests {
 
     #[test]
     fn parse_empty_config_uses_defaults() {
-        let cfg = AppConfig::parse("");
+        let cfg = AppConfig::parse("").unwrap();
         assert_eq!(cfg, AppConfig::default());
     }
 
     #[test]
-    fn parse_malformed_toml_uses_defaults() {
+    fn parse_malformed_toml_returns_none() {
         let cfg = AppConfig::parse("this is not valid toml [[[");
-        assert_eq!(cfg, AppConfig::default());
+        assert!(cfg.is_none());
     }
 
     #[test]
     fn border_width_clamped_low() {
         let toml_str = r#"border_width = 0"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
     #[test]
     fn border_width_clamped_high() {
         let toml_str = r#"border_width = 99"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 20);
     }
 
     #[test]
     fn parse_color_hex_solid() {
         let toml_str = "color = \"#00FF00\"";
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 0, g: 255, b: 0 });
     }
 
     #[test]
     fn parse_invalid_modifier_defaults_to_alt() {
         let toml_str = r#"modifier = "bogus""#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
     }
 
@@ -430,21 +431,21 @@ mod tests {
     #[test]
     fn border_width_exactly_1() {
         let toml_str = r#"border_width = 1"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
     #[test]
     fn border_width_exactly_20() {
         let toml_str = r#"border_width = 20"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 20);
     }
 
     #[test]
     fn border_width_negative_clamped_to_1() {
         let toml_str = r#"border_width = -5"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
@@ -453,7 +454,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_color() {
         let toml_str = r##"color = "#0000FF""##;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
         assert_eq!(cfg.border_width, 4); // default
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 0, g: 0, b: 255 });
@@ -462,7 +463,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_border_width() {
         let toml_str = r#"border_width = 12"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
         assert_eq!(cfg.border_width, 12);
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 0 }); // default

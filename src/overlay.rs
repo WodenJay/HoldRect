@@ -1364,7 +1364,7 @@ mod tests {
         #[test]
         fn parse_partial_config_only_color() {
             let toml_str = r#"color = "rainbow""#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
             assert_eq!(cfg.border_width, 4);
             assert_eq!(cfg.color_mode, ColorMode::Rainbow);
@@ -1373,27 +1373,27 @@ mod tests {
         #[test]
         fn parse_negative_border_width_clamped_to_one() {
             let toml_str = r#"border_width = -5"#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.border_width, 1);
         }
 
         #[test]
         fn parse_border_width_at_lower_bound() {
             let toml_str = r#"border_width = 1"#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.border_width, 1);
         }
 
         #[test]
         fn parse_border_width_at_upper_bound() {
             let toml_str = r#"border_width = 20"#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.border_width, 20);
         }
 
         #[test]
         fn parse_whitespace_only_uses_defaults() {
-            let cfg = AppConfig::parse("   \n\t  ");
+            let cfg = AppConfig::parse("   \n\t  ").unwrap();
             assert_eq!(cfg, AppConfig::default());
         }
 
@@ -1402,21 +1402,21 @@ mod tests {
             let toml_str = r#"unknown_key = 42
 modifier = "Ctrl""#;
             // serde ignores extra keys by default with Deserialize
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.modifier_vk_codes, vec![0x11, 0xA2, 0xA3]);
         }
 
         #[test]
         fn parse_color_hex_with_hash_via_parse() {
             let toml_str = r##"color = "#FF00FF""##;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 255 });
         }
 
         #[test]
         fn parse_modifier_win() {
             let toml_str = r#"modifier = "Win""#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.modifier_vk_codes, vec![0x5B, 0x5C]);
             assert_eq!(cfg.border_width, 4);
         }
@@ -1424,7 +1424,7 @@ modifier = "Ctrl""#;
         #[test]
         fn parse_color_mixed_case_rainbow() {
             let toml_str = r#"color = "rAiNbOw""#;
-            let cfg = AppConfig::parse(toml_str);
+            let cfg = AppConfig::parse(toml_str).unwrap();
             assert_eq!(cfg.color_mode, ColorMode::Rainbow);
         }
 
