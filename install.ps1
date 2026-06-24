@@ -2,7 +2,7 @@
 try {
 $ErrorActionPreference = 'Stop'
 
-$Owner = '<OWNER>'  # Replace with actual GitHub username
+$Owner = 'WodenJay'
 $Repo = 'HoldRect'
 $ExeName = 'holdrect.exe'
 $InstallDir = Join-Path $env:LOCALAPPDATA 'HoldRect'
