@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Hold Alt + drag to highlight any screen area. Release to dismiss.</strong><br>
-  A lightweight screen highlighter for recordings, presentations, and live demos — under 5 MB, near-zero memory.
+  A lightweight screen highlighter for recordings, presentations, and live demos — under 2 MB, near-zero memory.
 </p>
 
 ---
