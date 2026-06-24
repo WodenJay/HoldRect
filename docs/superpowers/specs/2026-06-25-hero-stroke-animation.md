@@ -16,7 +16,7 @@ A new band inserted between the navigation bar and the existing hero section. Di
 
 | File | Change |
 |------|--------|
-| `docs/index.html` | Add new `<section class="hero-brand">` between nav and hero |
+| `docs/index.html` | Add new `<section class="hero-brand">` inside `<main>`, before the existing hero section |
 | `docs/style.css` | Add `.hero-brand` layout, SVG text styles, keyframe animations, hover states, reduced-motion fallback |
 
 No new files. No JavaScript. Pure CSS animation on an SVG `<text>` element.
@@ -40,7 +40,7 @@ nav (64px, sticky)
 ```
 
 - **Background:** Canvas (`#faf9f5`) — same as hero
-- **Padding:** 48px vertical (compact, not section-level — this is a visual accent, not a full section)
+- **Padding:** `var(--space-xxl)` (48px) vertical (compact, not section-level — this is a visual accent, not a full section)
 - **Alignment:** Centered horizontally
 - **Max-width:** Follows `.container` (1200px)
 
@@ -76,13 +76,25 @@ The text is rendered as an inline SVG `<text>` element, not as HTML text. This g
       font-family="'Cormorant Garamond', Georgia, 'Times New Roman', serif"
       font-size="96"
       font-weight="400"
-      letter-spacing="-2"
-    >HoldRect</text>
+      letter-spacing="-2px"
+    >HoldRect
+      <animate
+        attributeName="stroke-dashoffset"
+        from="2000" to="0"
+        dur="0.8s"
+        begin="0s"
+        fill="freeze"
+        calcMode="spline"
+        keySplines="0.25 0.1 0.25 1"
+      />
+    </text>
   </svg>
 </section>
 ```
 
 **SVG viewBox:** `0 0 800 120` — wide enough for the text at 96px. The `text-anchor="middle"` + `x="50%"` centers it. The SVG scales responsively via `width: 100%; max-width: 800px`.
+
+**Insertion point:** Inside `<main>`, as the first child before the existing `<section class="hero">`.
 
 ---
 
@@ -94,52 +106,37 @@ On page load, the text strokes draw themselves from left to right, then the fill
 
 **Timeline:**
 ```
-0.0s    stroke-dashoffset: 100% → 0% begins (0.8s ease-out)
+0.0s    stroke-dashoffset: 2000 → 0 begins (0.8s ease-out, SMIL)
 0.8s    stroke fully drawn
-1.0s    fill-opacity: 0 → 1 begins (0.4s ease)
+1.0s    fill-opacity: 0 → 1 begins (0.4s ease, CSS animation)
 1.4s    animation complete, text in resting state (filled with stroke)
 ```
 
 **CSS Keyframes:**
 
 ```css
-@keyframes hero-brand-draw {
-  from { stroke-dashoffset: 1; }
-  to   { stroke-dashoffset: 0; }
-}
-
 @keyframes hero-brand-fill {
   from { fill-opacity: 0; }
   to   { fill-opacity: 1; }
 }
 ```
 
-**Implementation detail:** `stroke-dasharray` is set to `1` and `stroke-dashoffset` animates from `1` to `0` (using `pathLength` normalization via CSS `stroke-dasharray: 1` and `stroke-dashoffset: 1` on the text element). CSS cannot animate `stroke-dashoffset` on SVG `<text>` in all browsers — use `@supports` or fall back to a SMIL `<animate>` element inside the SVG for `stroke-dashoffset`. The SMIL approach is more reliable for SVG text stroke animation:
+**Stroke draw technique:** SVG `<text>` does not support `pathLength`, so `stroke-dasharray: 1` normalization won't work. Instead, use a large `stroke-dasharray` value (2000) that exceeds any glyph's outline length, and animate `stroke-dashoffset` from 2000 to 0 via SMIL `<animate>` (more reliable than CSS on SVG text). The SMIL `<animate>` element is a child of the `<text>` element (included in the HTML snippet above).
 
-```xml
-<animate
-  attributeName="stroke-dashoffset"
-  from="1" to="0"
-  dur="0.8s"
-  begin="0s"
-  fill="freeze"
-  calcMode="spline"
-  keySplines="0.25 0.1 0.25 1"
-/>
-```
-
-Fill opacity is animated via CSS `animation` on the same text element, delayed by 1s.
+Fill opacity is animated via CSS `animation` on the text element, delayed by 1s.
 
 ### Hover — Revert to Stroke State
 
-When the user hovers over the text:
+When the user hovers over the `.hero-brand` section:
 - `fill-opacity` transitions from `1` to `0` over 0.3s ease
 - Stroke remains visible at all times
 - The text appears as a stroked/outlined letterform
 
 When the mouse leaves:
-- `fill-opacity` transitions from `0` to `1` over 0.4s ease
+- `fill-opacity` transitions from `0` to `1` over 0.3s ease
 - Text returns to solid filled state
+
+**Hover target:** The entire `.hero-brand` section (not just the `<text>` glyphs) — this ensures the hover triggers even when the cursor is between letters or in the surrounding whitespace. Use `.hero-brand:hover .hero-brand__text` selector.
 
 **CSS:**
 
@@ -149,17 +146,15 @@ When the mouse leaves:
   fill-opacity: 1;
   stroke: #141413;
   stroke-width: 2;
-  stroke-dasharray: 1;
+  stroke-dasharray: 2000;
   stroke-dashoffset: 0;
   transition: fill-opacity 0.3s ease;
 }
 
-.hero-brand__text:hover {
+.hero-brand:hover .hero-brand__text {
   fill-opacity: 0;
 }
 ```
-
-The `transition` on `fill-opacity` handles both hover-in and hover-out (with different durations if needed via `transition` shorthand).
 
 ---
 
@@ -175,18 +170,14 @@ On `prefers-reduced-motion: reduce`:
 ```css
 @media (prefers-reduced-motion: reduce) {
   .hero-brand__text {
-    stroke-dashoffset: 0;
+    stroke-dashoffset: 0 !important;
     fill-opacity: 1;
     animation: none;
-  }
-  .hero-brand__text animate {
-    /* SMIL animation disabled via CSS cannot directly control SMIL,
-       but setting stroke-dashoffset: 0 via CSS overrides the animated value */
   }
 }
 ```
 
-**Note:** SMIL animations cannot be paused via CSS. The CSS `stroke-dashoffset: 0` with `!important` will override the SMIL animation in browsers that support CSS overrides on presentation attributes. For browsers where SMIL wins, the text simply appears fully stroked from the start — acceptable degraded behavior.
+**Note:** SMIL animations cannot be paused via CSS. The CSS `stroke-dashoffset: 0 !important` overrides the SMIL animation's value. For browsers where SMIL wins over CSS, the text appears fully stroked from the start — acceptable degraded behavior.
 
 ### Semantic
 
@@ -202,9 +193,9 @@ On `prefers-reduced-motion: reduce`:
 Full 96px text, centered, 48px vertical padding.
 
 ### Mobile (< 768px)
-- Font size scales down to 56px — add a second `<text>` at 56px inside a `<switch>` with `requiredFeature`, or simpler: set SVG `width: 100%; max-width: 80vw` so the viewBox scales the text proportionally on small screens (the 800-wide viewBox at 80vw on 375px = 300px rendered width, text ~36px effective). Adjust `max-width` in the media query to control the minimum readable size.
+- SVG scales naturally via viewBox — set `max-width: 90vw` so text doesn't overflow viewport (800px viewBox at 90vw on 375px screen = 337px rendered width, text ~40px effective — legible)
 - Padding reduces to 32px vertical
-- Letter-spacing tightens slightly
+- Letter-spacing tightens proportionally via viewBox scaling
 
 ```css
 @media (max-width: 768px) {
@@ -234,7 +225,7 @@ Monochrome. No coral. No rainbow. The animation IS the visual interest — color
 ## Do's and Don'ts
 
 - **Do** keep the stroke width at 2px — thinner gets invisible at smaller sizes, thicker looks clunky
-- **Do** use SMIL for the stroke-dashoffset animation (more reliable than CSS on SVG text)
+- **Do** use SMIL `<animate>` for the stroke-dashoffset animation with `stroke-dasharray: 2000` (covers all glyph outline lengths since `<text>` lacks `pathLength`)
 - **Do** respect prefers-reduced-motion
 - **Don't** add JavaScript — this is pure SVG + CSS
 - **Don't** use coral or rainbow colors on this element — the rest of the page has color, this band is typographic
