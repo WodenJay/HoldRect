@@ -3,7 +3,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use super::{PopupManager, PopupContent};
 
-const STATUS_HEIGHT: i32 = 44;
+const STATUS_HEIGHT: i32 = 48;
 const STATUS_RADIUS: i32 = 12;
 const STATUS_PADDING_H: i32 = 24;
 const STATUS_TOP_MARGIN: i32 = 48;
@@ -64,9 +64,9 @@ impl GdiRenderer {
             let original_stock_bitmap = SelectObject(mem_dc, mem_bitmap);
             let original_stock_bitmap = HBITMAP(original_stock_bitmap.0);
 
-            let font_normal = create_font(14, FW_MEDIUM.0);
-            let font_key = create_font(13, FW_SEMIBOLD.0);
-            let font_desc = create_font(13, FW_NORMAL.0);
+            let font_normal = create_font(16, FW_MEDIUM.0);
+            let font_key = create_font(15, FW_SEMIBOLD.0);
+            let font_desc = create_font(15, FW_NORMAL.0);
 
             ReleaseDC(HWND::default(), screen_dc);
 
@@ -177,13 +177,13 @@ impl GdiRenderer {
                 bottom: card_y + popup_h,
             };
             DrawTextW(self.mem_dc, &mut text_wide, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            fix_text_alpha(self.pixels, buf_w, buf_h, &text_rect);
 
             // Position and show window
             let x = mon_left + (mon_width - buf_w) / 2;
             let y = mon_top + STATUS_TOP_MARGIN + y_offset;
 
-            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE);
+            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
         }
@@ -228,6 +228,7 @@ impl GdiRenderer {
                     bottom: row_y + CHEATSHEET_ROW_HEIGHT,
                 };
                 DrawTextW(self.mem_dc, &mut key_w, &mut key_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                fix_text_alpha(self.pixels, buf_w, buf_h, &key_rect);
 
                 // Desc (right-aligned, regular)
                 SelectObject(self.mem_dc, self.font_desc);
@@ -240,14 +241,14 @@ impl GdiRenderer {
                     bottom: row_y + CHEATSHEET_ROW_HEIGHT,
                 };
                 DrawTextW(self.mem_dc, &mut desc_w, &mut desc_rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                fix_text_alpha(self.pixels, buf_w, buf_h, &desc_rect);
             }
 
             // Position: centered on monitor
             let x = mon_left + (mon_width - buf_w) / 2;
             let y = mon_top + (mon_height - buf_h) / 2 + y_offset;
 
-            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE);
+            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, buf_w, buf_h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h);
         }
@@ -344,6 +345,25 @@ unsafe fn blend_pixel(dst: *mut u8, r: u8, g: u8, b: u8, a: u8) {
     *dst.add(1) = (g as f32 * alpha + *dst.add(1) as f32 * inv) as u8; // G
     *dst.add(2) = (r as f32 * alpha + *dst.add(2) as f32 * inv) as u8; // R
     *dst.add(3) = (a as f32 + *dst.add(3) as f32 * inv).min(255.0) as u8; // A
+}
+
+/// Set alpha=255 for pixels where GDI drew text (alpha=0 but RGB nonzero).
+unsafe fn fix_text_alpha(pixels: *mut u8, buf_w: i32, buf_h: i32, rect: &RECT) {
+    for py in rect.top..rect.bottom {
+        for px in rect.left..rect.right {
+            let idx = ((py * buf_w + px) * 4) as usize;
+            if idx + 3 >= (buf_w * buf_h * 4) as usize {
+                continue;
+            }
+            let b = *pixels.add(idx);
+            let g = *pixels.add(idx + 1);
+            let r = *pixels.add(idx + 2);
+            let a = *pixels.add(idx + 3);
+            if a == 0 && (b > 0 || g > 0 || r > 0) {
+                *pixels.add(idx + 3) = 255;
+            }
+        }
+    }
 }
 
 /// Push pixels to the layered window. mem_dc already has mem_bitmap selected.
