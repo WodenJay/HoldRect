@@ -4,22 +4,51 @@
   <img src="assets/HoldRect.png" alt="HoldRect logo" width="200">
 </p>
 
-> Hold modifier key + drag to draw a rainbow-striped rectangle anywhere on screen. Release to dismiss.
+<p align="center">
+  <strong>Hold Alt + drag to highlight any screen area. Release to dismiss.</strong><br>
+  A lightweight screen highlighter for recordings, presentations, and live demos — under 5 MB, near-zero memory.
+</p>
 
-A lightweight, always-on screen highlighter for recordings and presentations. Zero mode switching, zero friction — just hold and drag.
+---
+
+## Why HoldRect?
+
+Recording your screen and need to highlight something **right now**?
+
+Switching to an annotation tool, picking a shape, drawing, then switching back — your audience stopped watching 10 seconds ago.
+
+**HoldRect has no modes to switch.** Hold `Alt`, drag a rectangle, done. Release and it vanishes. Your recording flow never breaks.
+
+And it won't fight your recorder for RAM — under 2 MB binary when it's on background. You will forget it when you're not using it.
 
 <p align="center">
   <img src="assets/HoldRect_show.gif" alt="HoldRect demo" width="600">
 </p>
 
-## Why HoldRect?
+## Features
 
-- **🌈 Rainbow animated border** — gradient flows along the rectangle perimeter. Unique to HoldRect; no competitor offers animated borders.
-- **⚡ Under 5 MB** — Rust native binary, no runtime, no Electron. Lightest tool in its class.
-- **🖱️ Modifier + drag** — hold `Alt`, left-click drag, release. No mode switching, no toolbar clicks, no hotkey sequences.
-- **📌 Pin & Spotlight** — press `1` during drag to pin the rectangle on screen; press `2` for spotlight (dim everything outside). Toggle anytime.
-- **🪟 Transparent overlay** — `WS_EX_TRANSPARENT` keeps the rectangle visual-only; your clicks pass through to the app underneath.
-- **🖥️ Windows now** — macOS and Linux support planned.
+| | Feature | What it does |
+|---|---|---|
+| ⚡ | **Zero-mode interaction** | Hold `Alt` + left-click drag. No toolbar, no hotkey sequence, no mode toggle. |
+| 🌈 | **Rainbow animated border** | Gradient flows along the rectangle perimeter. Unique to HoldRect. |
+| 📌 | **Pin & Spotlight** | Press `1` during drag to pin the rectangle. Press `2` to dim everything outside. Toggle anytime. |
+| 🖥️ | **Under 2 MB** | Rust native binary. No runtime, no Electron, no installer bloat. |
+
+## Quick Start
+
+```powershell
+irm https://raw.githubusercontent.com/WodenJay/HoldRect/main/install.ps1 | iex
+```
+
+Then hold `Alt` + drag anywhere. That's it.
+
+| Action | Shortcut |
+|--------|----------|
+| Draw a rectangle | `Alt` + drag |
+| Pin rectangle on screen | `Alt` + `1` + drag (`Esc` to clear) |
+| Spotlight (dim outside) | `Alt` + `2` + drag |
+| Both pin + spotlight | `Alt` + `1` + `2` + drag |
+| View all shortcuts | Hold `` Alt + ` `` |
 
 ## Installation
 
@@ -34,14 +63,6 @@ irm https://raw.githubusercontent.com/WodenJay/HoldRect/main/install.ps1 | iex
 1. Download `holdrect.exe` from [Releases](https://github.com/WodenJay/HoldRect/releases/latest)
 2. Run it — a tray icon appears, HoldRect is now listening
 3. To exit: right-click the tray icon → **Exit**
-
-## Quick Start
-
-- `Alt` + drag: draw a rectangle
-- `Alt` + `1` + drag: pinned rectangle (stays after release, `Esc` to clear)
-- `Alt` + `2` + drag: spotlight (dims area outside the rectangle)
-- `Alt` + `1` + `2` + drag: both
-- Hold `` Alt + ` `` to see all shortcuts
 
 ## Configuration
 
@@ -72,27 +93,19 @@ Each rectangle's Pin/Spotlight state is independent — drawing a new one resets
 
 | Tool | Open Source | Memory | Animated Border | Zero Mode Switch | Cross-Platform |
 |------|:-----------:|-------:|:---------------:|:----------------:|:--------------:|
-| **HoldRect** | ✓ | **< 5 MB** | **✓ rainbow** | **✓** | Planned |
+| **HoldRect** | ✓ | **< 2 MB** | **✓ rainbow** | **✓** | Planned |
 | Epic Pen | ✗ | ~20–50 MB | ✗ | ✗ | ✗ (Win) |
 | ZoomIt | ✗ | ~10–15 MB | ✗ | ✗ (Ctrl+2) | ✗ (Win) |
 | gInk | ✓ | ~15–30 MB | ✗ | ✗ | ✗ (Win) |
 | Gromit-MPX | ✓ | ~5–10 MB | ✗ | ✗ | ✗ (Linux) |
 | Fluor | ✓ | ~85 MB | ✗ | ✗ | ✗ (macOS) |
 
-HoldRect's differentiators: rainbow flow animation, modifier+drag interaction, per-rect toggle with live status popup, and a Rust-native footprint under 5 MB.
-
 ## Building from Source
 
 ```bash
-# Clone
 git clone https://github.com/WodenJay/HoldRect.git
 cd HoldRect
-
-# Build (Windows)
 cargo build --release
-
-# Run
-cargo run --release
 ```
 
 Requires Rust 1.75+ and Windows 10+.
