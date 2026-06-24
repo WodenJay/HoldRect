@@ -1,4 +1,4 @@
-# HoldRect
+<h1 align="center">HoldRect</h1>
 
 <p align="center">
   <img src="assets/HoldRect.png" alt="HoldRect logo" width="200">
