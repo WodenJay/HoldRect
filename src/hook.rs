@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -12,14 +12,14 @@ static SHOULD_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static DRAG_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
 static PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
-static MODIFIER_CODES: OnceLock<Vec<u32>> = OnceLock::new();
+static MODIFIER_CODES: RwLock<Vec<u32>> = RwLock::new(Vec::new());
 
 /// Start global input hook listener on a background thread.
 /// Replaces rdev — intercepts and suppresses modifier+mouse combo.
 pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>, modifier_codes: Vec<u32>) {
     TX.set(tx).expect("start_hook_listener called twice");
     PROXY.set(proxy).expect("start_hook_listener called twice");
-    MODIFIER_CODES.set(modifier_codes).expect("start_hook_listener called twice");
+    *MODIFIER_CODES.write().expect("MODIFIER_CODES RwLock poisoned") = modifier_codes;
 
     std::thread::spawn(move || unsafe {
         let _keyboard = SetWindowsHookExW(
@@ -46,6 +46,11 @@ pub fn start_hook_listener(tx: Sender<InputEvent>, proxy: EventLoopProxy<()>, mo
     });
 }
 
+/// Update modifier key codes at runtime (for hot-reload).
+pub fn update_modifier_codes(new_codes: Vec<u32>) {
+    *MODIFIER_CODES.write().expect("MODIFIER_CODES RwLock poisoned") = new_codes;
+}
+
 unsafe extern "system" fn keyboard_hook_proc(
     n_code: i32,
     w_param: WPARAM,
@@ -56,7 +61,7 @@ unsafe extern "system" fn keyboard_hook_proc(
         let is_key_down = w_param == WPARAM(WM_KEYDOWN as usize) || w_param == WPARAM(WM_SYSKEYDOWN as usize);
 
         let modifier_held = SHOULD_SUPPRESS.load(Ordering::Relaxed);
-        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, MODIFIER_CODES.get().expect("MODIFIER_CODES not set"), modifier_held) {
+        if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, &MODIFIER_CODES.read().expect("MODIFIER_CODES RwLock poisoned"), modifier_held) {
             // Only update suppression flag for modifier events — Esc/DigitPressed
             // would incorrectly suppress mouse clicks if stored as true.
             if matches!(event, InputEvent::ModifierChanged { .. }) {
@@ -658,5 +663,26 @@ mod tests {
         let event = decide_keyboard(0x12, false, alt_codes, true);
         // This should be ModifierChanged, not HideHelp — modifier release is handled by ModifierChanged
         assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: false }));
+    }
+
+    // --- RwLock pattern test ---
+
+    #[test]
+    fn update_modifier_codes_changes_read_value() {
+        use std::sync::RwLock;
+
+        // Pattern test: mirrors the global MODIFIER_CODES RwLock pattern
+        let codes: RwLock<Vec<u32>> = RwLock::new(vec![0x12, 0xA4, 0xA5]);
+
+        // Initial value readable
+        assert_eq!(*codes.read().unwrap(), vec![0x12, 0xA4, 0xA5]);
+
+        // Update replaces value
+        *codes.write().unwrap() = vec![0x11, 0xA2, 0xA3];
+        assert_eq!(*codes.read().unwrap(), vec![0x11, 0xA2, 0xA3]);
+
+        // Update with empty
+        *codes.write().unwrap() = vec![];
+        assert!(codes.read().unwrap().is_empty());
     }
 }

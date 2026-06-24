@@ -206,6 +206,18 @@ impl PopupManager {
         &self.cheatsheet_rows
     }
 
+    pub fn update_modifier_name(&mut self, name: &str) {
+        let drag_label = format!("{} + drag", name);
+        let help_label = format!("{} + `", name);
+        self.cheatsheet_rows = vec![
+            (drag_label, "Draw".to_string()),
+            ("1".to_string(), "Pin".to_string()),
+            ("2".to_string(), "Spotlight".to_string()),
+            ("Esc".to_string(), "Clear".to_string()),
+            (help_label, "Help".to_string()),
+        ];
+    }
+
     pub fn current_y_offset(&self) -> f64 {
         match &self.phase {
             PopupPhase::Hidden => START_Y_OFFSET,
@@ -423,6 +435,21 @@ mod tests {
         // DigitPressed should NOT replace cheatsheet with status
         m.on_event(&InputEvent::DigitPressed(1), &state);
         assert_eq!(m.content, PopupContent::Cheatsheet);
+    }
+
+    // --- update_modifier_name ---
+
+    #[test]
+    fn update_modifier_name_rebuilds_cheatsheet_rows() {
+        let mut m = PopupManager::new("Alt");
+        assert_eq!(m.cheatsheet_rows()[0].0, "Alt + drag");
+        assert_eq!(m.cheatsheet_rows()[4].0, "Alt + `");
+        m.update_modifier_name("Ctrl");
+        assert_eq!(m.cheatsheet_rows()[0].0, "Ctrl + drag");
+        assert_eq!(m.cheatsheet_rows()[1].0, "1");
+        assert_eq!(m.cheatsheet_rows()[2].0, "2");
+        assert_eq!(m.cheatsheet_rows()[3].0, "Esc");
+        assert_eq!(m.cheatsheet_rows()[4].0, "Ctrl + `");
     }
 
     // --- on_event with HideHelp ---

@@ -69,15 +69,15 @@ impl AppConfig {
         let Ok(content) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        Self::parse(&content)
+        Self::parse(&content).unwrap_or_default()
     }
 
-    pub(crate) fn parse(toml_str: &str) -> Self {
+    pub(crate) fn parse(toml_str: &str) -> Option<Self> {
         let raw: RawConfig = match toml::from_str(toml_str) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("Warning: config file malformed ({e}), using defaults");
-                return Self::default();
+                return None;
             }
         };
 
@@ -90,13 +90,102 @@ impl AppConfig {
             None => ColorMode::Solid { r: 255, g: 0, b: 0 },
         };
 
-        Self {
+        Some(Self {
             modifier_vk_codes,
             border_width,
             color_mode,
             modifier_name,
+        })
+    }
+}
+
+/// Watch `~/.holdrect/` directory for config file changes.
+/// Blocks current thread. Sends new AppConfig on `tx` when config.toml changes.
+/// Exits silently if directory doesn't exist.
+pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<AppConfig>) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::*;
+    use windows::Win32::Storage::FileSystem::*;
+
+    if !dir.exists() {
+        return;
+    }
+
+    let dir_wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    let dir_handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(dir_wide.as_ptr()),
+            FILE_LIST_DIRECTORY.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    };
+
+    let Ok(handle) = dir_handle else {
+        eprintln!("Warning: could not open config directory for watching");
+        return;
+    };
+
+    let mut buffer = [0u8; 4096];
+    let mut bytes_returned: u32 = 0;
+
+    loop {
+        let ok = unsafe {
+            ReadDirectoryChangesW(
+                handle,
+                buffer.as_mut_ptr() as *mut _,
+                buffer.len() as u32,
+                false,
+                FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME,
+                Some(&mut bytes_returned),
+                None,
+                None,
+            )
+        };
+
+        if ok.is_err() {
+            break;
+        }
+
+        // Debounce: editors fire multiple events per save
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Parse FILE_NOTIFY_INFORMATION chain manually
+        // Layout: NextEntryOffset(u32, 0) + Action(u32, 4) + FileNameLength(u32, 8) + FileName(u16[], 12)
+        let mut offset = 0usize;
+        loop {
+            if offset + 12 > buffer.len() { break; }
+            let next_offset = u32::from_ne_bytes(buffer[offset..offset+4].try_into().unwrap());
+            let name_len = u32::from_ne_bytes(buffer[offset+8..offset+12].try_into().unwrap()) as usize / 2;
+            let name_start = offset + 12;
+            let name_end = name_start + name_len * 2;
+            if name_end > buffer.len() { break; }
+
+            let name_bytes = &buffer[name_start..name_end];
+            let name = String::from_utf16_lossy(
+                &(0..name_len).map(|i| u16::from_ne_bytes([name_bytes[i*2], name_bytes[i*2+1]])).collect::<Vec<_>>()
+            );
+
+            if name.eq_ignore_ascii_case("config.toml") {
+                let config_path = dir.join("config.toml");
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    if let Some(new_config) = AppConfig::parse(&content) {
+                        let _ = tx.send(new_config);
+                    }
+                }
+                break;
+            }
+
+            if next_offset == 0 { break; }
+            offset += next_offset as usize;
         }
     }
+
+    unsafe { let _ = CloseHandle(handle); }
 }
 
 #[cfg(test)]
@@ -203,7 +292,7 @@ mod tests {
             border_width = 8
             color = "rainbow"
         "#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x11, 0xA2, 0xA3]);
         assert_eq!(cfg.border_width, 8);
         assert_eq!(cfg.color_mode, ColorMode::Rainbow);
@@ -212,7 +301,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_modifier() {
         let toml_str = r#"modifier = "Shift""#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x10, 0xA0, 0xA1]);
         assert_eq!(cfg.border_width, 4);
         assert_eq!(
@@ -223,41 +312,41 @@ mod tests {
 
     #[test]
     fn parse_empty_config_uses_defaults() {
-        let cfg = AppConfig::parse("");
+        let cfg = AppConfig::parse("").unwrap();
         assert_eq!(cfg, AppConfig::default());
     }
 
     #[test]
-    fn parse_malformed_toml_uses_defaults() {
+    fn parse_malformed_toml_returns_none() {
         let cfg = AppConfig::parse("this is not valid toml [[[");
-        assert_eq!(cfg, AppConfig::default());
+        assert!(cfg.is_none());
     }
 
     #[test]
     fn border_width_clamped_low() {
         let toml_str = r#"border_width = 0"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
     #[test]
     fn border_width_clamped_high() {
         let toml_str = r#"border_width = 99"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 20);
     }
 
     #[test]
     fn parse_color_hex_solid() {
         let toml_str = "color = \"#00FF00\"";
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 0, g: 255, b: 0 });
     }
 
     #[test]
     fn parse_invalid_modifier_defaults_to_alt() {
         let toml_str = r#"modifier = "bogus""#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
     }
 
@@ -342,21 +431,21 @@ mod tests {
     #[test]
     fn border_width_exactly_1() {
         let toml_str = r#"border_width = 1"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
     #[test]
     fn border_width_exactly_20() {
         let toml_str = r#"border_width = 20"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 20);
     }
 
     #[test]
     fn border_width_negative_clamped_to_1() {
         let toml_str = r#"border_width = -5"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.border_width, 1);
     }
 
@@ -365,7 +454,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_color() {
         let toml_str = r##"color = "#0000FF""##;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
         assert_eq!(cfg.border_width, 4); // default
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 0, g: 0, b: 255 });
@@ -374,7 +463,7 @@ mod tests {
     #[test]
     fn parse_partial_config_only_border_width() {
         let toml_str = r#"border_width = 12"#;
-        let cfg = AppConfig::parse(toml_str);
+        let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]); // default Alt
         assert_eq!(cfg.border_width, 12);
         assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 0 }); // default
@@ -405,6 +494,34 @@ mod tests {
             parse_color("#ZZZZZZ"),
             ColorMode::Solid { r: 255, g: 0, b: 0 }
         );
+    }
+
+    #[test]
+    fn watch_config_dir_detects_file_change() {
+        let dir = std::env::temp_dir().join("holdrect_test_watch");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "border_width = 2\n").unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let watch_dir = dir.clone();
+        let _handle = std::thread::spawn(move || {
+            watch_config_dir(watch_dir, tx);
+        });
+
+        // Give watcher time to start
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Modify the file
+        std::fs::write(dir.join("config.toml"), "border_width = 8\n").unwrap();
+
+        // Should receive update within 2 seconds
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        assert!(result.is_ok(), "watcher should detect config change");
+        assert_eq!(result.unwrap().border_width, 8);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
