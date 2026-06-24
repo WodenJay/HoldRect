@@ -313,9 +313,10 @@ impl App {
         let has_pinned = !self.state.pinned_rects.is_empty();
 
         if !has_drawing && !has_pinned {
-            window.set_visible(false);
-            #[cfg(windows)]
-            hide_from_alt_tab(window);
+            if self.overlay_shown {
+                window.set_visible(false);
+                self.overlay_shown = false;
+            }
             return;
         }
 
