@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HoldRect — Highlight anything. Instantly.</title>
+  <meta name="description" content="A lightweight screen highlighter for recordings, presentations, and live demos. Hold Alt, drag a rectangle, done. Under 2 MB.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="assets/HoldRect.png" type="image/png">
+</head>
+<body>
+
+  <!-- 1. Navigation Bar -->
+  <nav class="nav" aria-label="Main navigation">
+    <div class="nav__inner container">
+      <a href="." class="nav__brand" aria-label="HoldRect home">
+        <img src="assets/HoldRect.png" alt="HoldRect logo" class="nav__logo" width="28" height="28">
+        <span class="nav__wordmark">HoldRect</span>
+      </a>
+      <div class="nav__actions">
+        <a href="https://github.com/WodenJay/HoldRect" class="nav__link">GitHub</a>
+        <a href="https://github.com/WodenJay/HoldRect/releases/latest" class="btn btn--primary">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- 2. Hero Band -->
+    <section class="hero" aria-label="Hero">
+      <div class="hero__inner container">
+        <div class="hero__content">
+          <h1 class="hero__title">Highlight anything. Instantly.</h1>
+          <p class="hero__subtitle">Hold Alt, drag a rectangle, done. A lightweight screen highlighter for recordings, presentations, and live demos — under 2 MB. Windows today, macOS &amp; Linux coming soon.</p>
+          <div class="hero__actions">
+            <a href="https://github.com/WodenJay/HoldRect/releases/latest" class="btn btn--primary">Download for Windows</a>
+            <a href="https://github.com/WodenJay/HoldRect" class="btn btn--text">View on GitHub →</a>
+          </div>
+        </div>
+        <div class="hero__demo">
+          <div class="hero__demo-card">
+            <picture>
+              <source srcset="assets/holdrect-demo-static.png" media="(prefers-reduced-motion: reduce)">
+              <img src="assets/HoldRect_show.gif" alt="HoldRect demo: hold Alt, drag to draw a rainbow-bordered rectangle on screen" class="hero__gif" loading="eager">
+            </picture>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Features Band -->
+    <section class="features" aria-label="Features">
+      <div class="features__inner container">
+        <h2 class="features__heading">Why HoldRect?</h2>
+        <div class="features__grid">
+          <div class="feature-card">
+            <span class="feature-card__icon" aria-hidden="true">⚡</span>
+            <h3 class="feature-card__title">Zero-Mode Interaction</h3>
+            <p class="feature-card__desc">No toolbar, no hotkey sequence. Hold Alt and drag — that's the entire interface.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-card__icon" aria-hidden="true">🌈</span>
+            <h3 class="feature-card__title">Rainbow Border</h3>
+            <p class="feature-card__desc">Gradient flows along the rectangle perimeter. Unique to HoldRect. Your audience sees exactly what you mean.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-card__icon" aria-hidden="true">📌</span>
+            <h3 class="feature-card__title">Pin &amp; Spotlight</h3>
+            <p class="feature-card__desc">Press 1 to pin the rectangle on screen. Press 2 to dim everything outside. Toggle anytime.</p>
+          </div>
+          <div class="feature-card">
+            <span class="feature-card__icon" aria-hidden="true">🪶</span>
+            <h3 class="feature-card__title">Ultra-Lightweight</h3>
+            <p class="feature-card__desc">Under 2 MB. Rust native binary with no runtime, no Electron, no installer bloat. You'll forget it's running.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Install Band (Dark) -->
+    <section class="install" aria-label="Installation">
+      <div class="install__inner container">
+        <h2 class="install__heading">Get started in seconds</h2>
+        <div class="install__card">
+          <div class="install__code-block">
+            <code class="install__code"><span class="install__prompt">$</span> irm https://raw.githubusercontent.com/WodenJay/HoldRect/main/install.ps1 | iex</code>
+          </div>
+          <p class="install__hint">Then hold Alt + drag anywhere. That's it.</p>
+          <a href="https://github.com/WodenJay/HoldRect/releases/latest" class="install__link">Or download from GitHub Releases →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. CTA Band (Coral) -->
+    <section class="cta" aria-label="Call to action">
+      <div class="cta__inner container">
+        <h2 class="cta__heading">Highlight anything, instantly.</h2>
+        <p class="cta__subtitle">Free and open source. MIT licensed.</p>
+        <a href="https://github.com/WodenJay/HoldRect/releases/latest" class="btn btn--secondary-on-coral">Download for Windows</a>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 6. Footer -->
+  <footer class="footer">
+    <div class="footer__inner container">
+      <div class="footer__left">
+        <span class="footer__brand">HoldRect</span>
+        <span class="footer__credit">Made by <a href="https://github.com/WodenJay" class="footer__link">WodenJay</a></span>
+      </div>
+      <div class="footer__right">
+        <a href="https://github.com/WodenJay/HoldRect" class="footer__link">GitHub</a>
+        <span class="footer__sep" aria-hidden="true">·</span>
+        <span class="footer__license">MIT License</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
