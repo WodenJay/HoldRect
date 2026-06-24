@@ -51,9 +51,9 @@ irm https://raw.githubusercontent.com/<OWNER>/HoldRect/main/install.ps1 | iex
 **Behavior:**
 1. If `holdrect` process is running, print error and exit (Windows locks the exe file)
 2. Download directly from `https://github.com/<OWNER>/HoldRect/releases/latest/download/holdrect.exe` (no API call, no rate limit, no JSON parsing)
-3. Download to temp file first, then move to `$env:LOCALAPPDATA\HoldRect\holdrect.exe` (atomic replace)
-4. If `$env:LOCALAPPDATA\HoldRect` not in user PATH, append via `[Environment]::SetEnvironmentVariable('PATH', ..., 'User')`
-5. Print success message with installed path
+3. Download to temp file in same directory (`$env:LOCALAPPDATA\HoldRect\holdrect.exe.tmp`), then rename to `holdrect.exe` (same-volume rename on NTFS is atomic)
+4. If `$env:LOCALAPPDATA\HoldRect` not in user PATH, append via `[Environment]::SetEnvironmentVariable('PATH', ..., 'User')`. Also update `$env:PATH` in current session so it works immediately.
+5. Print success message with installed path. If PATH was modified, print "Restart your terminal for PATH change to take effect."
 
 **Idempotent:** re-run overwrites exe, does not duplicate PATH entry. Fails gracefully if holdrect is running.
 

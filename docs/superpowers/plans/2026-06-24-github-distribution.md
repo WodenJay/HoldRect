@@ -57,10 +57,18 @@ jobs:
       - name: Verify version matches tag
         shell: bash
         run: |
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          CARGO_VERSION=$(grep -m1 '^version\s*=' Cargo.toml | sed 's/.*"\([0-9.]*\)".*/\1/')
           TAG_VERSION=${GITHUB_REF_NAME#v}
           if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
             echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Verify no placeholder remains
+        shell: bash
+        run: |
+          if grep -r '<OWNER>' . --include='*.ps1' --include='*.md' --include='*.yml' -l; then
+            echo "::error::<OWNER> placeholder found in tracked files. Replace with actual GitHub username."
             exit 1
           fi
 
@@ -76,19 +84,7 @@ jobs:
           files: target/release/holdrect.exe
 ```
 
-- [ ] **Step 3: Verify YAML syntax**
-
-Run in PowerShell:
-```powershell
-# Quick syntax check — ensure valid YAML
-Get-Content .github/workflows/release.yml | ConvertFrom-Yaml -ErrorAction Stop
-# If ConvertFrom-Yaml not available, use python:
-python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"
-```
-
-Expected: no errors (valid YAML).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/release.yml
@@ -112,6 +108,7 @@ Create `install.ps1`:
 
 ```powershell
 #Requires -Version 5.1
+try {
 $ErrorActionPreference = 'Stop'
 
 $Owner = '<OWNER>'  # Replace with actual GitHub username
@@ -133,13 +130,14 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-# Download to temp file, then move (atomic replace)
-$tempFile = Join-Path $env:TEMP "holdrect_$([guid]::NewGuid()).exe"
+# Download to temp file in same dir, then rename (NTFS same-volume rename is atomic)
+$tempFile = Join-Path $InstallDir "holdrect.exe.tmp"
 try {
     Write-Host "Downloading holdrect from GitHub..." -ForegroundColor Cyan
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $tempFile -UseBasicParsing
 
-    # Move into place (overwrites existing)
+    # Rename into place (overwrites existing)
+    if (Test-Path $InstallPath) { Remove-Item $InstallPath -Force }
     Move-Item -Path $tempFile -Destination $InstallPath -Force
 } catch {
     if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
@@ -152,12 +150,18 @@ $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
 if ($userPath -notlike "*$InstallDir*") {
     $newPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
     [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
+    # Also update current session
+    $env:PATH = "$env:PATH;$InstallDir"
     Write-Host "Added $InstallDir to user PATH." -ForegroundColor Yellow
-    Write-Host "Restart your terminal for PATH change to take effect." -ForegroundColor Yellow
+    Write-Host "Restart your terminal for PATH change to take effect in other sessions." -ForegroundColor Yellow
 }
 
 Write-Host "holdrect installed to $InstallPath" -ForegroundColor Green
-Write-Host "Run 'holdrect' to start (restart terminal first if just installed)."
+Write-Host "Run 'holdrect' to start."
+} catch {
+    Write-Error "Installation failed: $_"
+    exit 1
+}
 ```
 
 - [ ] **Step 2: Verify script syntax locally**
