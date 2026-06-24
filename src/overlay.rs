@@ -330,13 +330,35 @@ impl App {
 
         if !has_drawing && !has_pinned {
             if self.overlay_shown {
+                #[cfg(windows)]
+                {
+                    // Submit a fully transparent frame before hiding, so
+                    // the next show_window_topmost won't flash stale content.
+                    let hwnd = get_hwnd(window);
+                    let mut wr = windows::Win32::Foundation::RECT::default();
+                    if unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr)
+                    }
+                    .is_ok()
+                    {
+                        let width = wr.right - wr.left;
+                        let height = wr.bottom - wr.top;
+                        if width > 0 && height > 0 {
+                            if let Some(cache) = self.dib_cache.as_mut() {
+                                clear_dib_pixels(cache, width, height);
+                                commit_dib(window, cache, width, height, wr.left, wr.top);
+                            }
+                        }
+                    }
+
+                    hide_from_alt_tab(window);
+                    self.dib_cache = None;
+                }
+
+                #[cfg(not(windows))]
                 window.set_visible(false);
-                #[cfg(windows)]
-                hide_from_alt_tab(window);
+
                 self.overlay_shown = false;
-                // Release DIB buffer memory when idle (rebuilt on next draw)
-                #[cfg(windows)]
-                { self.dib_cache = None; }
             }
             return;
         }
