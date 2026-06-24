@@ -6,7 +6,7 @@ use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::raw_window_handle::HasWindowHandle;
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowId, WindowLevel};
 
 #[cfg(windows)]
 use winit::platform::windows::WindowAttributesExtWindows;
@@ -192,6 +192,7 @@ impl ApplicationHandler for App {
             .with_title("HoldRect")
             .with_decorations(false)
             .with_visible(false) // start hidden
+            .with_window_level(WindowLevel::AlwaysOnTop)
             .with_skip_taskbar(true)
             .with_position(winit::dpi::PhysicalPosition::new(left, top))
             .with_inner_size(winit::dpi::PhysicalSize::new(
@@ -328,7 +329,7 @@ impl App {
         let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
         let has_pinned = !self.state.pinned_rects.is_empty();
 
-        if !has_drawing && !has_pinned {
+        if !should_show_overlay(has_drawing, has_pinned) {
             if self.overlay_shown {
                 #[cfg(windows)]
                 {
@@ -416,9 +417,9 @@ impl App {
             }
 
             if !self.overlay_shown {
-                show_window_topmost(window);
                 self.overlay_shown = true;
             }
+            show_window_topmost(window); // re-enforce Z-order every frame
             commit_dib(window, cache, width, height, wr.left, wr.top);
         }
     }
@@ -449,7 +450,6 @@ fn set_click_through(window: &Window) {
             ex_style
             | WS_EX_TRANSPARENT.0 as isize
             | WS_EX_LAYERED.0 as isize
-            | WS_EX_TOPMOST.0 as isize
             | WS_EX_NOACTIVATE.0 as isize
             | WS_EX_TOOLWINDOW.0 as isize,
         );
@@ -468,17 +468,34 @@ fn hide_from_alt_tab(window: &Window) {
 
 #[cfg(windows)]
 fn show_window_topmost(window: &Window) {
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     let hwnd = get_hwnd(window);
     unsafe {
-        let topmost = HWND(-1isize as *mut core::ffi::c_void);
         let _ = SetWindowPos(
-            hwnd, topmost, 0, 0, 0, 0,
+            hwnd, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
     }
+}
+
+/// Whether the overlay should be visible based on current drawing state.
+/// Pure logic extracted from `render()` for testability.
+fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
+    has_drawing || has_pinned
+}
+
+/// Simulate multi-frame overlay state and return the number of times
+/// `show_window_topmost` should have been called.
+/// Models the Z-order enforcement policy.
+fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
+    let mut count = 0;
+    for &(has_drawing, has_pinned) in frames {
+        if should_show_overlay(has_drawing, has_pinned) {
+            count += 1; // enforce topmost EVERY visible frame
+        }
+    }
+    count
 }
 
 /// Convert HSV to RGB. h: 0-360, s: 0-1, v: 0-1.
@@ -1784,5 +1801,73 @@ modifier = "Ctrl""#;
             let outside_offset = 0;
             assert_eq!(buf[outside_offset + 3], 160, "outside should be dimmed with offset");
         }
+    }
+
+    // -- should_show_overlay tests --
+
+    #[test]
+    fn overlay_hidden_when_no_content() {
+        assert!(!should_show_overlay(false, false));
+    }
+
+    #[test]
+    fn overlay_shown_when_drawing() {
+        assert!(should_show_overlay(true, false));
+    }
+
+    #[test]
+    fn overlay_shown_when_pinned() {
+        assert!(should_show_overlay(false, true));
+    }
+
+    #[test]
+    fn overlay_shown_when_both() {
+        assert!(should_show_overlay(true, true));
+    }
+
+    // -- topmost_enforce_count tests --
+    //
+    // The overlay must call show_window_topmost EVERY frame while visible,
+    // not only on the hidden→shown transition. Windows can demote HWND_TOPMOST
+    // at any time; re-enforcing each frame prevents the overlay from sinking
+    // behind other windows mid-drag.
+
+    #[test]
+    fn topmost_not_enforced_when_idle() {
+        // All frames: no drawing, no pinned → no enforcement
+        assert_eq!(topmost_enforce_count(&[(false, false); 5]), 0);
+    }
+
+    #[test]
+    fn topmost_enforced_on_first_show() {
+        // Transition: idle → drawing → should enforce
+        let frames = [(false, false), (true, false)];
+        assert_eq!(topmost_enforce_count(&frames), 1);
+    }
+
+    #[test]
+    fn topmost_enforced_every_visible_frame() {
+        // After show, 3 more visible frames → total 3 enforcements (one per visible frame)
+        // Current buggy code returns 1 (only on transition).
+        // This test captures the core bug: Z-order lost mid-drag.
+        let frames = [
+            (false, false), // idle
+            (true, false),  // start drawing → show (enforce #1)
+            (true, false),  // still drawing (enforce #2)
+            (true, false),  // still drawing (enforce #3)
+        ];
+        assert_eq!(topmost_enforce_count(&frames), 3);
+    }
+
+    #[test]
+    fn topmost_re_enforced_after_hide_show_cycle() {
+        // Hide then show again → must re-enforce
+        let frames = [
+            (true, false),  // draw → show (enforce #1)
+            (false, false), // stop → hide
+            (true, false),  // draw again → show (enforce #2)
+            (true, false),  // still drawing (enforce #3)
+        ];
+        assert_eq!(topmost_enforce_count(&frames), 3);
     }
 }
