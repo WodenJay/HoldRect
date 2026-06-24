@@ -28,7 +28,7 @@ jobs:
       - name: Verify no placeholder remains
         shell: bash
         run: |
-          if grep -r '<OWNER>' . --exclude-dir='.git' --exclude-dir='target' --exclude-dir='docs' -l; then
+          if grep -r '<OWNER>' . --exclude-dir='.git' --exclude-dir='.github' --exclude-dir='target' --exclude-dir='docs' -l; then
             echo "::error::<OWNER> placeholder found in tracked files. Replace with actual GitHub username."
             exit 1
           fi
