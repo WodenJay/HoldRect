@@ -444,11 +444,12 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Parse FILE_NOTIFY_INFORMATION chain
+        // Layout: NextEntryOffset(u32) + Action(u32) + FileNameLength(u32) + FileName(u16[])
         let mut offset = 0usize;
         loop {
             if offset + 12 > buffer.len() { break; }
-            let entry = unsafe { &*(buffer.as_ptr().add(offset) as *const FileNotifyInformation) };
-            let name_len = entry.FileNameLength as usize / 2;
+            let next_offset = u32::from_ne_bytes(buffer[offset..offset+4].try_into().unwrap());
+            let name_len = u32::from_ne_bytes(buffer[offset+8..offset+12].try_into().unwrap()) as usize / 2;
             let name_start = offset + 12;
             let name_end = name_start + name_len * 2;
             if name_end > buffer.len() { break; }
@@ -468,9 +469,8 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
                 break; // process one change per cycle
             }
 
-            let next = entry.NextEntryOffset;
-            if next == 0 { break; }
-            offset += next as usize;
+            if next_offset == 0 { break; }
+            offset += next_offset as usize;
         }
     }
 
@@ -478,7 +478,7 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
 }
 ```
 
-Note: Uses `FileNotifyInformation` from `windows` crate. The struct layout: `NextEntryOffset(4) + Action(4) + FileNameLength(4) + FileName(variable)`.
+Note: Manually parses raw bytes from `FILE_NOTIFY_INFORMATION` buffer to avoid unsafe struct casting. Layout: `NextEntryOffset(u32, 0) + Action(u32, 4) + FileNameLength(u32, 8) + FileName(u16[], 12)`.
 
 - [ ] **Step 5: Add required Windows features**
 
