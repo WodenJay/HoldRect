@@ -99,7 +99,7 @@ git commit -m "docs: add assets for landing page"
   <meta name="description" content="A lightweight screen highlighter for recordings, presentations, and live demos. Hold Alt, drag a rectangle, done. Under 2 MB.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <link rel="icon" href="assets/HoldRect.png" type="image/png">
 </head>
@@ -108,7 +108,7 @@ git commit -m "docs: add assets for landing page"
   <!-- 1. Navigation Bar -->
   <nav class="nav" aria-label="Main navigation">
     <div class="nav__inner container">
-      <a href="/" class="nav__brand" aria-label="HoldRect home">
+      <a href="." class="nav__brand" aria-label="HoldRect home">
         <img src="assets/HoldRect.png" alt="HoldRect logo" class="nav__logo" width="28" height="28">
         <span class="nav__wordmark">HoldRect</span>
       </a>
@@ -198,7 +198,7 @@ git commit -m "docs: add assets for landing page"
   </main>
 
   <!-- 6. Footer -->
-  <footer class="footer" role="contentinfo">
+  <footer class="footer">
     <div class="footer__inner container">
       <div class="footer__left">
         <span class="footer__brand">HoldRect</span>
@@ -339,13 +339,13 @@ a {
 
 h1, h2, h3 {
   font-family: var(--font-display);
-  font-weight: 500;
+  font-weight: 400;
   color: var(--color-ink);
-  line-height: 1.05;
 }
 
 h1 {
   font-size: 64px;
+  line-height: 1.05;
   letter-spacing: -1.5px;
 }
 
@@ -372,9 +372,10 @@ h3 {
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.0;
   border-radius: var(--radius-md);
-  padding: 10px 20px;
+  padding: 12px 20px;
+  min-height: 40px;
   border: none;
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -387,7 +388,8 @@ h3 {
   color: var(--color-on-primary);
 }
 
-.btn--primary:hover {
+.btn--primary:hover,
+.btn--primary:active {
   background-color: var(--color-primary-active);
 }
 
@@ -395,19 +397,18 @@ h3 {
   background: none;
   color: var(--color-ink);
   padding: 10px 0;
+  min-height: 44px;
   font-weight: 500;
-}
-
-.btn--text:hover {
-  color: var(--color-primary);
 }
 
 .btn--secondary-on-coral {
   background-color: var(--color-canvas);
   color: var(--color-ink);
+  min-height: 40px;
 }
 
-.btn--secondary-on-coral:hover {
+.btn--secondary-on-coral:hover,
+.btn--secondary-on-coral:active {
   background-color: var(--color-surface-card);
 }
 ```
@@ -484,10 +485,6 @@ git commit -m "docs: add landing page CSS design system tokens"
   font-weight: 500;
   color: var(--color-ink);
 }
-
-.nav__link:hover {
-  color: var(--color-primary);
-}
 ```
 
 - [ ] **Step 2: Verify nav renders**
@@ -550,7 +547,7 @@ git commit -m "docs: style navigation bar"
 .hero__demo-card {
   background-color: var(--color-surface-dark);
   border-radius: var(--radius-xl);
-  padding: var(--space-lg);
+  padding: var(--space-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -592,7 +589,7 @@ git commit -m "docs: style hero band"
    ============================================================ */
 
 .features {
-  background-color: var(--color-surface-card);
+  background-color: var(--color-canvas);
   padding: var(--space-section) 0;
 }
 
@@ -608,8 +605,7 @@ git commit -m "docs: style hero band"
 }
 
 .feature-card {
-  background-color: var(--color-canvas);
-  border: 1px solid var(--color-hairline);
+  background-color: var(--color-surface-card);
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
 }
@@ -639,7 +635,7 @@ git commit -m "docs: style hero band"
 
 - [ ] **Step 2: Verify features render**
 
-Open in browser. Expected: `#efe9de` band with centered "Why HoldRect?" heading. 2x2 grid of cream cards with emoji, title, description. Each card has hairline border and 12px radius.
+Open in browser. Expected: canvas (`#faf9f5`) band with centered "Why HoldRect?" heading. 2x2 grid of surface-card (`#efe9de`) cards with emoji, title, description. No hairline border — the surface-card color provides sufficient contrast against canvas.
 
 - [ ] **Step 3: Commit**
 
@@ -774,7 +770,7 @@ git commit -m "docs: style install band"
 
 .footer {
   background-color: var(--color-surface-dark);
-  border-top: 1px solid rgba(230, 223, 216, 0.15);
+  border-top: 1px solid var(--color-surface-dark-elevated);
   padding: 64px 0;
 }
 
@@ -812,10 +808,6 @@ git commit -m "docs: style install band"
 .footer__link {
   color: var(--color-on-dark-soft);
   font-size: 14px;
-}
-
-.footer__link:hover {
-  color: var(--color-on-dark);
 }
 
 .footer__sep {
@@ -937,21 +929,10 @@ git commit -m "docs: style CTA band and footer"
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-  border-radius: var(--radius-md);
 }
 
-/* Reduced motion: hide animated GIF, show static fallback */
-@media (prefers-reduced-motion: reduce) {
-  .hero__gif {
-    content: url('assets/holdrect-demo-static.png');
-  }
-}
-
-/* Ensure sufficient contrast for muted text on dark */
-.install__hint,
-.install__link {
-  /* Already specified in section styles */
-}
+/* Reduced motion: GIF handled by <picture>/<source> in HTML —
+   static fallback PNG swaps in automatically. No CSS needed. */
 ```
 
 - [ ] **Step 2: Verify responsive behavior**

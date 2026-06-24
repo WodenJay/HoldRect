@@ -46,15 +46,15 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
 
 | Role | Font | Fallback | Size | Weight | Line Height | Letter Spacing |
 |------|------|----------|------|--------|-------------|----------------|
-| Display XL (h1) | Cormorant Garamond | Georgia, "Times New Roman", serif | 64px | 500 | 1.05 | -1.5px |
-| Display LG (h2) | Cormorant Garamond | Georgia, "Times New Roman", serif | 48px | 500 | 1.1 | -1px |
-| Display SM (h3) | Cormorant Garamond | Georgia, "Times New Roman", serif | 28px | 500 | 1.2 | -0.3px |
+| Display XL (h1) | Cormorant Garamond | Georgia, "Times New Roman", serif | 64px | 400 | 1.05 | -1.5px |
+| Display LG (h2) | Cormorant Garamond | Georgia, "Times New Roman", serif | 48px | 400 | 1.1 | -1px |
+| Display SM (h3) | Cormorant Garamond | Georgia, "Times New Roman", serif | 28px | 400 | 1.2 | -0.3px |
 | Title (card h3) | Inter | sans-serif | 18px | 500 | 1.4 | 0 |
 | Body | Inter | sans-serif | 16px | 400 | 1.55 | 0 |
 | Body Sm | Inter | sans-serif | 14px | 400 | 1.55 | 0 |
-| Caption | Inter | sans-serif | 12px | 500 | 1.4 | 1.5px |
+| Caption | Inter | sans-serif | 13px | 500 | 1.4 | 0 |
 | Code | JetBrains Mono | monospace | 14px | 400 | 1.6 | 0 |
-| Button | Inter | sans-serif | 14px | 500 | 1.2 | 0 |
+| Button | Inter | sans-serif | 14px | 500 | 1.0 | 0 |
 
 ### Spacing
 
@@ -104,14 +104,14 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
   - Subtitle: "Hold Alt, drag a rectangle, done. A lightweight screen highlighter for recordings, presentations, and live demos — under 2 MB. Windows today, macOS & Linux coming soon." — Inter body-md, body color
   - Button row: Primary coral "Download for Windows" + text link "View on GitHub →"
 - **Right column:**
-  - GIF demo (`HoldRect_show.gif`) inside a `rounded-xl` dark card (`#181715`) with 24px padding — frames the demo like a product mockup
+  - GIF demo (`HoldRect_show.gif`) inside a `rounded-xl` dark card (`#181715`) with 32px padding (product-mockup-card-dark pattern) — frames the demo like a product mockup
   - Max-width on GIF: 100%, height auto, centered in card
   - GIF note: the GIF has a light/opaque background, so add a subtle 1px `#252320` border on the GIF element to soften the hard edge against the dark card
 - **Mobile:** Single column, text first then GIF below
 
 ### 3. Features Band
 
-- **Background:** Surface Card (`#efe9de`) — one step darker than canvas
+- **Background:** Canvas (`#faf9f5`) — standard Anthropic pattern: feature cards sit on canvas floor
 - **Padding:** `section` (96px) vertical
 - **Heading:** "Why HoldRect?" — Cormorant Garamond display-lg, centered, ink color
 - **Layout:** 2x2 grid on desktop, 1-up on mobile
@@ -120,7 +120,7 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
   - **Card 2 — Rainbow Border:** Icon 🌈, "Gradient flows along the rectangle perimeter. Unique to HoldRect. Your audience sees exactly what you mean." — Inter body-md
   - **Card 3 — Pin & Spotlight:** Icon 📌, "Press 1 to pin the rectangle on screen. Press 2 to dim everything outside. Toggle anytime." — Inter body-md
   - **Card 4 — Ultra-Lightweight:** Icon 🪶, "Under 2 MB. Rust native binary with no runtime, no Electron, no installer bloat. You'll forget it's running." — Inter body-md
-- **Card style:** Background canvas (`#faf9f5`) — deliberately one step lighter than the band background (`#efe9de`) to create a raised/inset contrast, matching Anthropic's cream-on-card surface rhythm. Rounded-lg (12px), padding xl (32px), 1px hairline border
+- **Card style:** Background surface-card (`#efe9de`) — per Anthropic `feature-card` component spec, cards use surface-card on canvas floor. Rounded-lg (12px), padding xl (32px)
 
 ### 4. Install Band (Dark)
 
@@ -136,11 +136,11 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
 ### 5. CTA Band (Coral)
 
 - **Background:** Primary coral (`#cc785c`)
-- **Padding:** 64px vertical
+- **Padding:** 64px (uniform, per `{component.cta-band-coral}`)
 - **Layout:** Centered text
 - **Heading:** "Highlight anything, instantly." — Cormorant Garamond display-sm, on-primary (white)
 - **Subtitle:** "Free and open source. MIT licensed." — Inter body-md, white at 90% opacity
-- **Button:** Cream/canvas secondary button "Download for Windows" — inverted from primary (canvas bg, ink text)
+- **Button:** `{component.button-secondary}` (canvas bg, ink text, height 40px, rounded-md) placed on coral — the cream button CTA pattern from `{component.cta-band-coral}`
 
 ### 6. Footer
 
@@ -149,7 +149,7 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
 - **Layout:** Flex, space-between on desktop; stacked on mobile
 - **Left:** "HoldRect" wordmark + "Made by WodenJay" in on-dark-soft
 - **Right:** GitHub link + "MIT License" in on-dark-soft
-- **Top border:** 1px hairline (`#e6dfd8` at low opacity or a darker variant)
+- **Top border:** 1px surface-dark-elevated (`#252320`) — dark surfaces use color-block contrast, not cream hairline
 
 ---
 
@@ -167,7 +167,7 @@ No build step. No JS framework. No dependencies beyond Google Fonts CDN.
 ## Google Fonts
 
 Load via CDN `<link>`:
-- **Cormorant Garamond**: weights 500 (display headlines)
+- **Cormorant Garamond**: weight 400 (display headlines — weight 400 is non-negotiable per Anthropic design system)
 - **Inter**: weights 400, 500 (body, buttons, labels)
 - **JetBrains Mono**: weight 400 (code block)
 
