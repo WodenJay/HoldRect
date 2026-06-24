@@ -319,6 +319,9 @@ impl App {
             window.set_visible(false);
             #[cfg(windows)]
             hide_from_alt_tab(window);
+            // Release DIB buffer memory when idle (rebuilt on next draw)
+            #[cfg(windows)]
+            { self.dib_cache = None; }
             return;
         }
 
