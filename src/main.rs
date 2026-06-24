@@ -37,12 +37,20 @@ fn main() {
     let (event_loop, proxy) = create_event_loop();
     let (input_tx, input_rx) = mpsc::channel::<InputEvent>();
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
-    let (_config_tx, config_rx) = mpsc::channel::<crate::config::AppConfig>();
+    let (config_tx, config_rx) = mpsc::channel::<crate::config::AppConfig>();
 
     // Start Win32 input hook listener (replaces rdev)
     let config = crate::config::AppConfig::load();
     #[cfg(windows)]
     crate::hook::start_hook_listener(input_tx, proxy, config.modifier_vk_codes);
+
+    // Spawn config file watcher thread for hot-reload
+    let watch_dir = dirs::home_dir()
+        .map(|h| h.join(".holdrect"))
+        .unwrap_or_default();
+    thread::spawn(move || {
+        crate::config::watch_config_dir(watch_dir, config_tx);
+    });
 
     let _tray_icon = start_tray(exit_tx);
 
