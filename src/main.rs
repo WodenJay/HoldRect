@@ -7,6 +7,7 @@ mod state;
 mod overlay;
 mod tray;
 mod popup;
+mod mem_report;
 #[cfg(windows)]
 mod hook;
 
@@ -18,6 +19,18 @@ use crate::state::InputEvent;
 use crate::tray::{start_tray, AppExit};
 
 fn main() {
+    // --mem-report: print memory stats and exit (before GUI init)
+    if std::env::args().any(|a| a == "--mem-report") {
+        // Attach to parent console for stdout (we're windows_subsystem = "windows")
+        unsafe {
+            let _ = windows::Win32::System::Console::AttachConsole(
+                windows::Win32::System::Console::ATTACH_PARENT_PROCESS,
+            );
+        }
+        crate::mem_report::print_mem_report();
+        return;
+    }
+
     #[cfg(windows)]
     set_dpi_awareness();
 
