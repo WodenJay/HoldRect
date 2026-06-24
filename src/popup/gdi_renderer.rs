@@ -131,9 +131,8 @@ impl GdiRenderer {
             return;
         }
 
-        let (mon_left, mon_top, mon_right, mon_bottom) = monitor_rect;
+        let (mon_left, mon_top, mon_right, _) = monitor_rect;
         let mon_width = mon_right - mon_left;
-        let mon_height = mon_bottom - mon_top;
         let y_offset = manager.current_y_offset().round() as i32;
 
         match manager.content() {
@@ -141,7 +140,7 @@ impl GdiRenderer {
                 self.render_status(manager, mon_left, mon_top, mon_width, y_offset);
             }
             PopupContent::Cheatsheet => {
-                self.render_cheatsheet(manager, mon_left, mon_top, mon_width, mon_height, y_offset);
+                self.render_cheatsheet(manager, mon_left, mon_top, mon_width, y_offset);
             }
         }
     }
@@ -197,7 +196,7 @@ impl GdiRenderer {
         }
     }
 
-    fn render_cheatsheet(&mut self, manager: &PopupManager, mon_left: i32, mon_top: i32, mon_width: i32, mon_height: i32, y_offset: i32) {
+    fn render_cheatsheet(&mut self, manager: &PopupManager, mon_left: i32, mon_top: i32, mon_width: i32, y_offset: i32) {
         let rows = manager.cheatsheet_rows();
         let row_count = rows.len() as i32;
         let popup_w = CHEATSHEET_WIDTH;
