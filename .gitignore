@@ -2,3 +2,4 @@
 .superpowers
 skills-lock.json
 target/
+.worktrees/
