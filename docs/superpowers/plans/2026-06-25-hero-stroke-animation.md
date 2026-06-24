@@ -17,8 +17,9 @@
 - Stroke-dasharray: 2000 (covers all glyph outlines since `<text>` lacks `pathLength`)
 - SMIL `<animate>` for stroke-dashoffset (not CSS, which is unreliable on SVG text)
 - Hover target: `.hero-brand:hover .hero-brand__text` (whole section, not just text glyphs)
-- Reduced motion: `stroke-dashoffset: 0 !important` + `fill-opacity: 1` + `animation: none`
-- Font: Cormorant Garamond 400 (already loaded via Google Fonts CDN)
+- Reduced motion: CSS animations suppressed via `prefers-reduced-motion`. SMIL cannot be paused by CSS — stroke-draw will still play in some browsers; this is acceptable degraded behavior
+- Font: Cormorant Garamond **500** (per Anthropic design system: this weight approximates Copernicus at 400). Already loaded via Google Fonts CDN but needs `wght@500` added to the `<link>`
+- Hover has no effect during the 0–1.4s animation window (CSS animation overrides transition)
 - Commit as WodenJay, no Co-Author line
 
 ---
@@ -27,22 +28,30 @@
 
 | File | Responsibility |
 |------|---------------|
-| `docs/index.html:30-31` | Insert `<section class="hero-brand">` with inline SVG between `<main>` and `<section class="hero">` |
-| `docs/style.css` | Append `.hero-brand` section: layout, SVG text styles, keyframe animation, hover state, reduced-motion override, mobile responsive |
+| `docs/index.html` | Update Google Fonts `<link>` to include `wght@500` for Cormorant Garamond. Insert `<section class="hero-brand">` with inline SVG inside `<main>`, before `<section class="hero">` |
+| `docs/style.css` | Append sections 15–17 after line 533 (end of section 14): layout, SVG text styles, keyframe animation, hover state, reduced-motion override, mobile responsive |
 
 ---
 
 ### Task 1: Add hero-brand HTML and CSS
 
 **Files:**
-- Modify: `docs/index.html` (insert after line 30 `<main>`, before line 32 `<!-- 2. Hero Band -->`)
-- Modify: `docs/style.css` (append new section after existing styles)
+- Modify: `docs/index.html` (Google Fonts link + insert SVG section)
+- Modify: `docs/style.css` (append after line 533, the closing `}` of section 14)
 
 **Produces:** Fully functional animated "HoldRect" text band with stroke-draw on load, fill fade-in, hover toggle, reduced-motion fallback, and mobile responsive.
 
-- [ ] **Step 1: Insert SVG section into `docs/index.html`**
+- [ ] **Step 1: Update Google Fonts link in `docs/index.html`**
 
-Insert the following after line 30 (`<main>`) and before line 32 (`<!-- 2. Hero Band -->`):
+The current link (line 10) loads `Cormorant+Garamond:wght@400`. Update to include weight 500:
+
+```html
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
+```
+
+- [ ] **Step 2: Insert SVG section into `docs/index.html`**
+
+Insert the following after the empty line 31 (after `<main>`) and before line 32 (`<!-- 2. Hero Band -->`):
 
 ```html
 
@@ -57,8 +66,8 @@ Insert the following after line 30 (`<main>`) and before line 32 (`<!-- 2. Hero 
           text-anchor="middle"
           font-family="'Cormorant Garamond', Georgia, 'Times New Roman', serif"
           font-size="96"
-          font-weight="400"
-          letter-spacing="-2px"
+          font-weight="500"
+          letter-spacing="-0.02em"
         >HoldRect
           <animate
             attributeName="stroke-dashoffset"
@@ -67,6 +76,7 @@ Insert the following after line 30 (`<main>`) and before line 32 (`<!-- 2. Hero 
             begin="0s"
             fill="freeze"
             calcMode="spline"
+            keyTimes="0;1"
             keySplines="0.25 0.1 0.25 1"
           />
         </text>
@@ -74,15 +84,15 @@ Insert the following after line 30 (`<main>`) and before line 32 (`<!-- 2. Hero 
     </section>
 ```
 
-- [ ] **Step 2: Append hero-brand CSS to `docs/style.css`**
+- [ ] **Step 3: Append hero-brand CSS to `docs/style.css`**
 
-Append the following after the last section of `style.css`:
+Append the following after line 533 (the closing `}` of the section 14 `@media` block):
 
 ```css
 /* --- 15. Hero Brand --- */
 .hero-brand {
   background-color: var(--color-canvas);
-  padding: var(--space-xxl) 0;
+  padding: 64px 0;
   display: flex;
   justify-content: center;
 }
@@ -99,9 +109,11 @@ Append the following after the last section of `style.css`:
   fill-opacity: 0;
   stroke: var(--color-ink);
   stroke-width: 2;
+  font-weight: 500;
   stroke-dasharray: 2000;
   stroke-dashoffset: 2000;
   animation: hero-brand-fill 0.4s ease 1s forwards;
+  transition: fill-opacity 0.3s ease;
 }
 
 @keyframes hero-brand-fill {
@@ -111,7 +123,6 @@ Append the following after the last section of `style.css`:
 
 .hero-brand:hover .hero-brand__text {
   fill-opacity: 0;
-  transition: fill-opacity 0.3s ease;
 }
 
 /* --- 16. Hero Brand Responsive --- */
@@ -137,38 +148,15 @@ Append the following after the last section of `style.css`:
 **Key implementation details:**
 - `fill-opacity: 0` initially — text invisible until stroke draws
 - `stroke-dasharray: 2000` + `stroke-dashoffset: 2000` — stroke fully hidden
-- SMIL `<animate>` draws stroke from 2000→0 over 0.8s (starts immediately)
+- SMIL `<animate>` draws stroke from 2000→0 over 0.8s (starts immediately on load)
 - CSS `animation: hero-brand-fill` delays 1s then fades fill in over 0.4s
-- Hover: `.hero-brand:hover .hero-brand__text` sets `fill-opacity: 0` (back to stroke-only)
-- Transition on hover target (not base) so hover-in is instant CSS specificity win, hover-out uses the base `transition` — but since we put transition on `:hover`, hover-in has 0.3s, hover-out has no transition (instant snap back). **Fix:** move `transition` to the base `.hero-brand__text` rule instead:
+- `transition: fill-opacity 0.3s ease` on the base rule — both hover-in and hover-out get 0.3s
+- `.hero-brand:hover .hero-brand__text` sets `fill-opacity: 0` (back to stroke-only outline)
+- The `animation` `forwards` fill mode sets `fill-opacity: 1` after completion; `transition` then governs hover changes
+- **Hover during animation (0–1.4s):** no effect — CSS animation overrides transition. This is expected
+- **Reduced motion:** CSS `animation: none` suppresses the fill fade. SMIL stroke-draw cannot be paused by CSS — it will still play in some browsers. `stroke-dashoffset: 0 !important` overrides the SMIL value where CSS wins. Acceptable degraded behavior
 
-Replace the hover CSS block with:
-
-```css
-.hero-brand__text {
-  fill: var(--color-ink);
-  fill-opacity: 0;
-  stroke: var(--color-ink);
-  stroke-width: 2;
-  stroke-dasharray: 2000;
-  stroke-dashoffset: 2000;
-  animation: hero-brand-fill 0.4s ease 1s forwards;
-  transition: fill-opacity 0.3s ease;
-}
-
-@keyframes hero-brand-fill {
-  from { fill-opacity: 0; }
-  to   { fill-opacity: 1; }
-}
-
-.hero-brand:hover .hero-brand__text {
-  fill-opacity: 0;
-}
-```
-
-This puts the `transition` on the base element so both hover-in and hover-out get 0.3s. The `animation` `forwards` fill mode sets `fill-opacity: 1` after the animation completes, and the `transition` then governs subsequent changes.
-
-- [ ] **Step 3: Verify in browser**
+- [ ] **Step 4: Verify in browser**
 
 Open `docs/index.html`. Expected behavior:
 1. Page loads → stroke draws from left to right over 0.8s
@@ -176,9 +164,9 @@ Open `docs/index.html`. Expected behavior:
 3. Hover over the "HoldRect" band → fill disappears, text becomes outlined
 4. Mouse leaves → fill reappears over 0.3s
 5. On mobile (< 768px) → text scales down proportionally, padding reduces
-6. With `prefers-reduced-motion: reduce` → text appears fully filled immediately, no animation
+6. With `prefers-reduced-motion: reduce` → text appears fully filled immediately (fill animation suppressed; SMIL stroke may still play)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add docs/index.html docs/style.css

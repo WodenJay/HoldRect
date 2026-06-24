@@ -40,7 +40,7 @@ nav (64px, sticky)
 ```
 
 - **Background:** Canvas (`#faf9f5`) — same as hero
-- **Padding:** `var(--space-xxl)` (48px) vertical (compact, not section-level — this is a visual accent, not a full section)
+- **Padding:** 64px vertical — between the compact 48px and full section 96px, giving the brand text breathing room without competing with the hero band's rhythm
 - **Alignment:** Centered horizontally
 - **Max-width:** Follows `.container` (1200px)
 
@@ -50,10 +50,10 @@ nav (64px, sticky)
 
 | Property | Value |
 |----------|-------|
-| Font family | Cormorant Garamond, Georgia, "Times New Roman", serif |
+| Font family | Cormorant Garamond, Georgia, "Times New Roman", serif (substitute for Copernicus/Tiempos Headline per Anthropic design system guidance) |
 | Font size | 96px |
-| Font weight | 400 |
-| Letter spacing | -2px |
+| Font weight | 500 (per design system: Cormorant Garamond needs 500 to approximate Copernicus at 400) |
+| Letter spacing | -0.02em (~-1.92px at 96px, per design system's Cormorant Garamond substitute guidance) |
 | Stroke width | 2px |
 | Stroke color | Ink (`#141413`) |
 | Fill color | Ink (`#141413`) |
@@ -75,8 +75,8 @@ The text is rendered as an inline SVG `<text>` element, not as HTML text. This g
       text-anchor="middle"
       font-family="'Cormorant Garamond', Georgia, 'Times New Roman', serif"
       font-size="96"
-      font-weight="400"
-      letter-spacing="-2px"
+      font-weight="500"
+      letter-spacing="-0.02em"
     >HoldRect
       <animate
         attributeName="stroke-dashoffset"
@@ -85,6 +85,7 @@ The text is rendered as an inline SVG `<text>` element, not as HTML text. This g
         begin="0s"
         fill="freeze"
         calcMode="spline"
+        keyTimes="0;1"
         keySplines="0.25 0.1 0.25 1"
       />
     </text>
@@ -126,6 +127,8 @@ On page load, the text strokes draw themselves from left to right, then the fill
 Fill opacity is animated via CSS `animation` on the text element, delayed by 1s.
 
 ### Hover — Revert to Stroke State
+
+**Design system note:** This hover state intentionally overrides the Anthropic design system's "no hover beyond what the system encodes" rule. The stroke-to-outline hover is a signature interaction that reinforces the product's drawing metaphor. This is a deliberate creative departure, not an oversight.
 
 When the user hovers over the `.hero-brand` section:
 - `fill-opacity` transitions from `1` to `0` over 0.3s ease
@@ -179,6 +182,10 @@ On `prefers-reduced-motion: reduce`:
 
 **Note:** SMIL animations cannot be paused via CSS. The CSS `stroke-dashoffset: 0 !important` overrides the SMIL animation's value. For browsers where SMIL wins over CSS, the text appears fully stroked from the start — acceptable degraded behavior.
 
+### Hover During Animation
+
+If the user hovers before the fill animation completes (0–1.4s), the CSS `animation` has higher specificity than `transition`, so hover has no effect during the intro. This is acceptable — the animation should be allowed to complete uninterrupted.
+
 ### Semantic
 
 - `<section class="hero-brand">` with `aria-label="Brand"`
@@ -190,7 +197,7 @@ On `prefers-reduced-motion: reduce`:
 ## Responsive
 
 ### Desktop (> 768px)
-Full 96px text, centered, 48px vertical padding.
+Full 96px text, centered, 64px vertical padding.
 
 ### Mobile (< 768px)
 - SVG scales naturally via viewBox — set `max-width: 90vw` so text doesn't overflow viewport (800px viewBox at 90vw on 375px screen = 337px rendered width, text ~40px effective — legible)
@@ -225,6 +232,7 @@ Monochrome. No coral. No rainbow. The animation IS the visual interest — color
 ## Do's and Don'ts
 
 - **Do** keep the stroke width at 2px — thinner gets invisible at smaller sizes, thicker looks clunky
+- **Do** use Cormorant Garamond at weight **500** (not 400) — the design system specifies 500 for this substitute font to approximate Copernicus at 400
 - **Do** use SMIL `<animate>` for the stroke-dashoffset animation with `stroke-dasharray: 2000` (covers all glyph outline lengths since `<text>` lacks `pathLength`)
 - **Do** respect prefers-reduced-motion
 - **Don't** add JavaScript — this is pure SVG + CSS
