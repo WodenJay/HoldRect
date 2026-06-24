@@ -7,7 +7,7 @@
   <meta name="description" content="A lightweight screen highlighter for recordings, presentations, and live demos. Hold Alt, drag a rectangle, done. Under 2 MB.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <link rel="icon" href="assets/HoldRect.png" type="image/png">
 </head>
@@ -28,6 +28,34 @@
   </nav>
 
   <main>
+
+    <!-- 1.5. Hero Brand -->
+    <section class="hero-brand" aria-label="Brand">
+      <svg class="hero-brand__svg" viewBox="0 0 800 120" aria-hidden="true">
+        <text
+          class="hero-brand__text"
+          x="50%"
+          y="50%"
+          dominant-baseline="central"
+          text-anchor="middle"
+          font-family="'Cormorant Garamond', Georgia, 'Times New Roman', serif"
+          font-size="96"
+          font-weight="500"
+          letter-spacing="-0.02em"
+        >HoldRect
+          <animate
+            attributeName="stroke-dashoffset"
+            from="2000" to="0"
+            dur="0.8s"
+            begin="0s"
+            fill="freeze"
+            calcMode="spline"
+            keyTimes="0;1"
+            keySplines="0.25 0.1 0.25 1"
+          />
+        </text>
+      </svg>
+    </section>
 
     <!-- 2. Hero Band -->
     <section class="hero" aria-label="Hero">

@@ -531,3 +531,58 @@ h3 {
     display: none;
   }
 }
+
+/* --- 15. Hero Brand --- */
+.hero-brand {
+  background-color: var(--color-canvas);
+  padding: 64px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.hero-brand__svg {
+  width: 100%;
+  max-width: 800px;
+  height: auto;
+  display: block;
+}
+
+.hero-brand__text {
+  fill: var(--color-ink);
+  fill-opacity: 0;
+  stroke: var(--color-ink);
+  stroke-width: 2;
+  font-weight: 500;
+  stroke-dasharray: 2000;
+  stroke-dashoffset: 2000;
+  animation: hero-brand-fill 0.4s ease 1s forwards;
+  transition: fill-opacity 0.3s ease;
+}
+
+@keyframes hero-brand-fill {
+  from { fill-opacity: 0; }
+  to   { fill-opacity: 1; }
+}
+
+.hero-brand:hover .hero-brand__text {
+  fill-opacity: 0;
+}
+
+/* --- 16. Hero Brand Responsive --- */
+@media (max-width: 768px) {
+  .hero-brand {
+    padding: var(--space-xl) 0;
+  }
+  .hero-brand__svg {
+    max-width: 90vw;
+  }
+}
+
+/* --- 17. Hero Brand Reduced Motion --- */
+@media (prefers-reduced-motion: reduce) {
+  .hero-brand__text {
+    stroke-dashoffset: 0 !important;
+    fill-opacity: 1;
+    animation: none;
+  }
+}
