@@ -535,14 +535,14 @@ h3 {
 /* --- 15. Hero Brand --- */
 .hero-brand {
   background-color: var(--color-canvas);
-  padding: 64px 0;
+  padding: 32px 0;
   display: flex;
   justify-content: center;
 }
 
 .hero-brand__svg {
   width: 100%;
-  max-width: 800px;
+  max-width: 2400px;
   height: auto;
   display: block;
 }
@@ -556,7 +556,7 @@ h3 {
   stroke-dasharray: 2000;
   stroke-dashoffset: 2000;
   animation: hero-brand-fill 0.4s ease 1s forwards;
-  transition: fill-opacity 0.3s ease;
+  transition: fill-opacity 0.8s ease;
 }
 
 @keyframes hero-brand-fill {
