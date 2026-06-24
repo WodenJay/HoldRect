@@ -565,7 +565,7 @@ h3 {
 }
 
 .hero-brand:hover .hero-brand__text {
-  fill-opacity: 0;
+  fill-opacity: 0 !important;
 }
 
 /* --- 16. Hero Brand Responsive --- */
