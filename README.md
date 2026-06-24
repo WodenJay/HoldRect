@@ -22,7 +22,7 @@ A lightweight, always-on screen highlighter for recordings and presentations. Ze
 
 ## Installation
 
-### One-liner (recommended)
+### One-liner
 
 ```powershell
 irm https://raw.githubusercontent.com/<OWNER>/HoldRect/main/install.ps1 | iex
