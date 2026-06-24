@@ -15,10 +15,14 @@ Add two distribution channels for HoldRect (Windows-only Rust app):
 
 **Trigger:** push tags matching `v*`
 
+**Permissions:** `permissions: contents: write` (default `GITHUB_TOKEN` sufficient, no PAT needed).
+
 **Job:** single job on `windows-latest`:
 1. Checkout repo
-2. `cargo build --release` (uses existing optimized profile: lto, strip, panic=abort)
-3. Upload `target/release/holdrect.exe` as release asset via `softprops/action-gh-release@v2`
+2. **Version check:** extract version from `Cargo.toml`, compare to tag (e.g. `v0.5.0` vs `0.5.0`), fail build on mismatch
+3. `Swatinem/rust-cache@v2` (cache deps across runs)
+4. `cargo build --release` (uses existing optimized profile: lto, strip, panic=abort)
+5. Upload `target/release/holdrect.exe` as release asset via `softprops/action-gh-release@v2`
 
 **Release naming:** tag name becomes release title (e.g. tag `v0.5.0` → release `v0.5.0`).
 
@@ -45,13 +49,13 @@ irm https://raw.githubusercontent.com/<OWNER>/HoldRect/main/install.ps1 | iex
 > **Note:** No git remote configured yet. Replace `<OWNER>` with actual GitHub username when repo is created.
 
 **Behavior:**
-1. Fetch latest release metadata from `https://api.github.com/repos/<OWNER>/HoldRect/releases/latest`
-2. Find the asset named `holdrect.exe` in the response
-3. Download to `$env:LOCALAPPDATA\HoldRect\holdrect.exe`
+1. If `holdrect` process is running, print error and exit (Windows locks the exe file)
+2. Download directly from `https://github.com/<OWNER>/HoldRect/releases/latest/download/holdrect.exe` (no API call, no rate limit, no JSON parsing)
+3. Download to temp file first, then move to `$env:LOCALAPPDATA\HoldRect\holdrect.exe` (atomic replace)
 4. If `$env:LOCALAPPDATA\HoldRect` not in user PATH, append via `[Environment]::SetEnvironmentVariable('PATH', ..., 'User')`
 5. Print success message with installed path
 
-**Idempotent:** re-run overwrites exe, does not duplicate PATH entry.
+**Idempotent:** re-run overwrites exe, does not duplicate PATH entry. Fails gracefully if holdrect is running.
 
 **No admin required.** User-scope PATH only.
 
