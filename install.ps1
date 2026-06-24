@@ -37,7 +37,7 @@ try {
 
 # Add to user PATH if not already present
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($userPath -notlike "*$InstallDir*") {
+if (-not $userPath.Split(';').Contains($InstallDir)) {
     $newPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
     [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
     # Also update current session
