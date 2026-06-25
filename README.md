@@ -32,6 +32,7 @@ And it won't fight your recorder for RAM — under 2 MB binary when it's on back
 | ⚡ | **Zero-mode interaction** | Hold `Alt` + left-click drag. No toolbar, no hotkey sequence, no mode toggle. |
 | 🌈 | **Rainbow animated border** | Gradient flows along the rectangle perimeter. Unique to HoldRect. |
 | 📌 | **Pin & Spotlight** | Press `1` during drag to pin the rectangle. Press `2` to dim everything outside. Toggle anytime. |
+| 🔍 | **Magnifier** | Press `3` to zoom into the area under cursor. Scroll to adjust zoom. |
 | 🖥️ | **Under 2 MB** | Rust native binary. No runtime, no Electron, no installer bloat. |
 
 ## Quick Start
@@ -48,6 +49,7 @@ Then hold `Alt` + drag anywhere. That's it.
 | Pin rectangle on screen | `Alt` + `1` + drag (`Esc` to clear) |
 | Spotlight (dim outside) | `Alt` + `2` + drag |
 | Both pin + spotlight | `Alt` + `1` + `2` + drag |
+| Magnifier | `Alt` + `3` (scroll to zoom) |
 | View all shortcuts | Hold `` Alt + ` `` |
 
 ## Installation
@@ -81,10 +83,12 @@ color = "rainbow"             # "rainbow" or hex like "#ff0000"
 Modifier down → Left-click down → Drag (rectangle follows cursor)
                                     ├─ press 1: toggle Pin
                                     ├─ press 2: toggle Spotlight
-                                    └─ press both: both active
+                                    ├─ press 3: toggle Magnifier
+                                    └─ press 1 + 2: both active
               → Mouse up
                   ├─ Transient (default): rectangle vanishes
                   └─ Pinned: rectangle stays, Esc clears all
+              → Modifier up: magnifier vanishes
 ```
 
 Each rectangle's Pin/Spotlight state is independent — drawing a new one resets to transient.
