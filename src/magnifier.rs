@@ -22,9 +22,7 @@ use windows::Win32::Foundation::HWND;
 /// Magnifier window -- separate WS_POPUP with circular clip, screen capture, zoom.
 #[cfg(windows)]
 pub struct MagnifierWindow {
-    #[allow(dead_code)]
     hwnd: HWND,
-    #[allow(dead_code)]
     diameter: i32,
 }
 
