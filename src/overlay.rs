@@ -539,7 +539,7 @@ fn perimeter_position(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32
     (dist / perimeter).clamp(0.0, 1.0)
 }
 
-fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &ColorMode, time_offset: f32) -> (u8, u8, u8) {
+pub(crate) fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &ColorMode, time_offset: f32) -> (u8, u8, u8) {
     match color_mode {
         ColorMode::Solid { r, g, b } => (*r, *g, *b),
         ColorMode::Rainbow => {
