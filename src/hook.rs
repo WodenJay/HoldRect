@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{OnceLock, RwLock};
 
@@ -11,6 +11,9 @@ use crate::state::InputEvent;
 static SHOULD_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static DRAG_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 pub(crate) static MAGNIFIER_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Bitmask tracking held digit keys (bit 0 = '1', bit 1 = '2', bit 2 = '3').
+/// Prevents repeated WM_KEYDOWN from toggling state rapidly.
+static DIGIT_KEY_DOWN: AtomicU8 = AtomicU8::new(0);
 static TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
 static PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
 static MODIFIER_CODES: RwLock<Vec<u32>> = RwLock::new(Vec::new());
@@ -60,6 +63,28 @@ unsafe extern "system" fn keyboard_hook_proc(
     if n_code >= 0 {
         let kb = *(l_param.0 as *const KBDLLHOOKSTRUCT);
         let is_key_down = w_param == WPARAM(WM_KEYDOWN as usize) || w_param == WPARAM(WM_SYSKEYDOWN as usize);
+
+        // Guard against repeated WM_KEYDOWN for digit keys (1/2/3).
+        // Windows sends repeated key-down events when a key is held.
+        // Track held state via bitmask; skip event if already held.
+        let digit_bit: u8 = match kb.vkCode {
+            0x31 => 0x01,
+            0x32 => 0x02,
+            0x33 => 0x04,
+            _ => 0,
+        };
+        if digit_bit != 0 {
+            let bits = DIGIT_KEY_DOWN.load(Ordering::Relaxed);
+            if is_key_down {
+                if bits & digit_bit != 0 {
+                    // Already held — skip repeat
+                    return CallNextHookEx(None, n_code, w_param, l_param);
+                }
+                DIGIT_KEY_DOWN.store(bits | digit_bit, Ordering::Relaxed);
+            } else {
+                DIGIT_KEY_DOWN.store(bits & !digit_bit, Ordering::Relaxed);
+            }
+        }
 
         let modifier_held = SHOULD_SUPPRESS.load(Ordering::Relaxed);
         if let Some(event) = decide_keyboard(kb.vkCode, is_key_down, &MODIFIER_CODES.read().expect("MODIFIER_CODES RwLock poisoned"), modifier_held) {

@@ -34,7 +34,7 @@ impl MagnifierWindow {
 
         unsafe {
             let hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
                 windows::core::w!("STATIC"),
                 windows::core::w!("HoldRect Magnifier"),
                 WS_POPUP,
@@ -136,22 +136,25 @@ impl MagnifierWindow {
                         pixel_slice[off + 1] = 0;
                         pixel_slice[off + 2] = 0;
                         pixel_slice[off + 3] = 0;
-                    } else if dist_sq > (center - BORDER_WIDTH as f64) * (center - BORDER_WIDTH as f64) {
-                        // Border region: rainbow color using circular perimeter position
-                        let (cr, cg, cb) = match color_mode {
-                            crate::config::ColorMode::Solid { r, g, b } => (*r, *g, *b),
-                            crate::config::ColorMode::Rainbow => {
-                                let pos = circular_perimeter_position(col, row, d / 2, d / 2);
-                                let hue = (pos + time_offset).fract() * 360.0;
-                                crate::overlay::hsv_to_rgb(hue, 1.0, 1.0)
-                            }
-                        };
-                        pixel_slice[off] = cb;     // B
-                        pixel_slice[off + 1] = cg; // G
-                        pixel_slice[off + 2] = cr; // R
+                    } else {
+                        // Inside circle: opaque
                         pixel_slice[off + 3] = 255;
+                        if dist_sq > (center - BORDER_WIDTH as f64) * (center - BORDER_WIDTH as f64) {
+                            // Border region: rainbow color using circular perimeter position
+                            let (cr, cg, cb) = match color_mode {
+                                crate::config::ColorMode::Solid { r, g, b } => (*r, *g, *b),
+                                crate::config::ColorMode::Rainbow => {
+                                    let pos = circular_perimeter_position(col, row, d / 2, d / 2);
+                                    let hue = (pos + time_offset).fract() * 360.0;
+                                    crate::overlay::hsv_to_rgb(hue, 1.0, 1.0)
+                                }
+                            };
+                            pixel_slice[off] = cb;     // B
+                            pixel_slice[off + 1] = cg; // G
+                            pixel_slice[off + 2] = cr; // R
+                        }
+                        // else: keep the stretched content as-is (RGB from StretchBlt, alpha now 255)
                     }
-                    // else: keep the stretched content as-is (alpha already 255 from StretchBlt)
                 }
             }
 
@@ -179,6 +182,17 @@ impl MagnifierWindow {
             DrawTextW(dib_dc, &mut wbuf, &mut text_rect, DT_CENTER | DT_SINGLELINE);
             SelectObject(dib_dc, old_font);
             let _ = DeleteObject(font);
+
+            // Restore alpha after GDI text rendering (GDI may corrupt alpha channel)
+            for row in 0..d {
+                for col in 0..d {
+                    let dx = col as f64 - center + 0.5;
+                    let dy = row as f64 - center + 0.5;
+                    let off = ((row * d + col) * 4) as usize;
+                    pixel_slice[off + 3] =
+                        if dx * dx + dy * dy <= radius_sq { 255 } else { 0 };
+                }
+            }
 
             // 8. UpdateLayeredWindow — atomically sets position, size, and content
             //    First call shows the window; subsequent calls update in-place.

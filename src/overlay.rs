@@ -362,7 +362,7 @@ impl App {
         let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
         let has_pinned = !self.state.pinned_rects.is_empty();
 
-        if !should_show_overlay(has_drawing, has_pinned, self.state.magnifier_active) {
+        if !should_show_overlay(has_drawing, has_pinned) {
             if self.overlay_shown {
                 #[cfg(windows)]
                 {
@@ -514,8 +514,8 @@ fn show_window_topmost(window: &Window) {
 
 /// Whether the overlay should be visible based on current drawing state.
 /// Pure logic extracted from `render()` for testability.
-fn should_show_overlay(has_drawing: bool, has_pinned: bool, magnifier_active: bool) -> bool {
-    has_drawing || has_pinned || magnifier_active
+fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
+    has_drawing || has_pinned
 }
 
 /// Simulate multi-frame overlay state and return the number of times
@@ -525,7 +525,7 @@ fn should_show_overlay(has_drawing: bool, has_pinned: bool, magnifier_active: bo
 fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
     let mut count = 0;
     for &(has_drawing, has_pinned) in frames {
-        if should_show_overlay(has_drawing, has_pinned, false) {
+        if should_show_overlay(has_drawing, has_pinned) {
             count += 1; // enforce topmost EVERY visible frame
         }
     }
@@ -1841,32 +1841,28 @@ modifier = "Ctrl""#;
 
     #[test]
     fn overlay_hidden_when_no_content() {
-        assert!(!should_show_overlay(false, false, false));
+        assert!(!should_show_overlay(false, false));
     }
 
     #[test]
     fn overlay_shown_when_drawing() {
-        assert!(should_show_overlay(true, false, false));
+        assert!(should_show_overlay(true, false));
     }
 
     #[test]
     fn overlay_shown_when_pinned() {
-        assert!(should_show_overlay(false, true, false));
+        assert!(should_show_overlay(false, true));
     }
 
     #[test]
     fn overlay_shown_when_both() {
-        assert!(should_show_overlay(true, true, false));
+        assert!(should_show_overlay(true, true));
     }
 
     #[test]
-    fn overlay_shown_when_magnifier_active() {
-        assert!(should_show_overlay(false, false, true));
-    }
-
-    #[test]
-    fn overlay_hidden_when_all_false() {
-        assert!(!should_show_overlay(false, false, false));
+    fn overlay_hidden_when_only_magnifier() {
+        // Magnifier has its own window, should not trigger full-screen overlay
+        assert!(!should_show_overlay(false, false));
     }
 
     // -- topmost_enforce_count tests --
