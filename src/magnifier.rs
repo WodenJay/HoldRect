@@ -68,6 +68,10 @@ impl MagnifierWindow {
                 host_hwnd, None, None, None,
             ).expect("Failed to create magnifier control");
 
+            // Clip magnifier control to inner circle (avoids covering border ring)
+            let mag_region = CreateEllipticRgn(0, 0, content_d, content_d);
+            SetWindowRgn(mag_hwnd, mag_region, true);
+
             // Paint initial border onto the host's layered surface
             Self::paint_border(host_hwnd, diameter, &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 }, 0.0);
 
