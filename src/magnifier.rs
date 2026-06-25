@@ -195,8 +195,6 @@ impl MagnifierWindow {
             }
 
             // 8. UpdateLayeredWindow — atomically sets position, size, and content
-            //    First call shows the window; subsequent calls update in-place.
-            //    No ShowWindow needed = no flicker.
             let ppt_dst = POINT { x, y };
             let size = SIZE { cx: d, cy: d };
             let ppt_src = POINT { x: 0, y: 0 };
@@ -206,10 +204,13 @@ impl MagnifierWindow {
                 SourceConstantAlpha: 255,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
-            let _ = UpdateLayeredWindow(
+            UpdateLayeredWindow(
                 self.hwnd, screen_dc, Some(&ppt_dst), Some(&size),
                 dib_dc, Some(&ppt_src), COLORREF(0), Some(&blend), ULW_ALPHA,
-            );
+            ).expect("UpdateLayeredWindow failed");
+
+            // 9. Show window after content is ready (avoids blank flash on first frame)
+            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
 
             // 9. Cleanup
             SelectObject(dib_dc, old_dib);
