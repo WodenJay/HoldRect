@@ -9,6 +9,8 @@ pub enum InputEvent {
     EscapePressed,
     ToggleHelp,   // modifier + ` pressed
     HideHelp,     // modifier or ` released
+    ScrollUp,     // magnifier zoom in
+    ScrollDown,   // magnifier zoom out
 }
 
 /// Drawing states
@@ -39,6 +41,8 @@ pub struct AppState {
     pub pinned_rects: Vec<PinnedRect>,
     pub pinned_active: bool,
     pub spotlight_active: bool,
+    pub magnifier_active: bool,
+    pub zoom_level: f64,
 }
 
 impl Default for AppState {
@@ -48,6 +52,8 @@ impl Default for AppState {
             pinned_rects: Vec::new(),
             pinned_active: false,
             spotlight_active: false,
+            magnifier_active: false,
+            zoom_level: 2.0,
         }
     }
 }
@@ -62,21 +68,21 @@ pub(crate) fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i3
 
 /// Pure state transition function. No side effects.
 pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
-    let (drawing, pinned_active, spotlight_active, pinned_rects) = match (&state.drawing, event) {
+    let (drawing, pinned_active, spotlight_active, magnifier_active, zoom_level, pinned_rects) = match (&state.drawing, event) {
         // --- DigitPressed(1) toggle (only in Armed or Drawing, i.e. modifier held) ---
         (DrawingState::Armed, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
+            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
         (DrawingState::Drawing { .. }, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
+            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
 
         // --- DigitPressed(2) spotlight toggle (only in Armed or Drawing) ---
         (DrawingState::Armed, InputEvent::DigitPressed(2)) => {
-            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.pinned_rects.clone())
+            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
         (DrawingState::Drawing { .. }, InputEvent::DigitPressed(2)) => {
-            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.pinned_rects.clone())
+            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
 
         // --- EscapePressed: clear all pinned rects and reset flags ---
@@ -85,22 +91,22 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                 DrawingState::Drawing { .. } => DrawingState::Armed,
                 other => other.clone(),
             };
-            (drawing, false, false, Vec::new())
+            (drawing, false, false, false, state.zoom_level, Vec::new())
         }
 
         // --- Existing transitions (pinned_active/pinned_rects unchanged unless noted) ---
 
         // Idle -> Armed on modifier press
         (DrawingState::Idle, InputEvent::ModifierChanged { pressed: true }) => {
-            (DrawingState::Armed, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
+            (DrawingState::Armed, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
         // Armed -> Drawing on mouse down
         (DrawingState::Armed, InputEvent::MouseButtonDown { x, y }) => {
-            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
+            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
         // Drawing: update current position on mouse move
         (DrawingState::Drawing { start, .. }, InputEvent::MouseMove { x, y }) => {
-            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.pinned_rects.clone())
+            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
         }
         // Drawing -> Armed on mouse up
         (DrawingState::Drawing { start, .. }, InputEvent::MouseButtonUp { x, y }) => {
@@ -110,11 +116,11 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                 let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
                 rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
             }
-            (DrawingState::Armed, false, false, rects)
+            (DrawingState::Armed, false, false, state.magnifier_active, state.zoom_level, rects)
         }
         // Armed -> Idle on modifier release
         (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => {
-            (DrawingState::Idle, false, false, state.pinned_rects.clone())
+            (DrawingState::Idle, false, false, false, state.zoom_level, state.pinned_rects.clone())
         }
         // Drawing -> Idle on modifier release
         (DrawingState::Drawing { start, current }, InputEvent::ModifierChanged { pressed: false }) => {
@@ -123,12 +129,28 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                 let (x0, y0, x1, y1) = normalize_rect(*start, *current);
                 rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
             }
-            (DrawingState::Idle, false, false, rects)
+            (DrawingState::Idle, false, false, false, state.zoom_level, rects)
         }
+        // --- DigitPressed(3) magnifier toggle (only in Armed or Drawing) ---
+        (DrawingState::Armed, InputEvent::DigitPressed(3)) => {
+            (state.drawing.clone(), state.pinned_active, state.spotlight_active, !state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
+        }
+        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(3)) => {
+            (state.drawing.clone(), state.pinned_active, state.spotlight_active, !state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
+        }
+
+        // --- ScrollUp/ScrollDown zoom adjustment ---
+        (_, InputEvent::ScrollUp) if state.magnifier_active => {
+            (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, (state.zoom_level + 0.5).min(8.0), state.pinned_rects.clone())
+        }
+        (_, InputEvent::ScrollDown) if state.magnifier_active => {
+            (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, (state.zoom_level - 0.5).max(1.5), state.pinned_rects.clone())
+        }
+
         // All other combinations: no state change
-        _ => (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.pinned_rects.clone()),
+        _ => (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone()),
     };
-    AppState { drawing, pinned_rects, pinned_active, spotlight_active }
+    AppState { drawing, pinned_rects, pinned_active, spotlight_active, magnifier_active, zoom_level }
 }
 
 #[cfg(test)]
@@ -806,5 +828,129 @@ mod tests {
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
         assert!(!state.pinned_rects[0].spotlight, "first rect unchanged");
         assert!(state.pinned_rects[1].spotlight, "second rect is spotlight");
+    }
+
+    // --- Magnifier mode: DigitPressed(3) toggle ---
+
+    #[test]
+    fn armed_digit_3_toggles_magnifier_active() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(3));
+        assert!(next.magnifier_active);
+        assert_eq!(next.drawing, DrawingState::Armed);
+    }
+
+    #[test]
+    fn armed_digit_3_toggle_off() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(3));
+        assert!(!next.magnifier_active);
+    }
+
+    #[test]
+    fn drawing_digit_3_toggles_magnifier_active() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::DigitPressed(3));
+        assert!(next.magnifier_active);
+        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+    }
+
+    #[test]
+    fn idle_digit_3_is_noop() {
+        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(3));
+        assert!(!next.magnifier_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Magnifier zoom: ScrollUp/ScrollDown ---
+
+    #[test]
+    fn magnifier_scroll_up_increases_zoom() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 2.0, ..Default::default() };
+        let next = process_event(&state, &InputEvent::ScrollUp);
+        assert!((next.zoom_level - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn magnifier_scroll_down_decreases_zoom() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 2.0, ..Default::default() };
+        let next = process_event(&state, &InputEvent::ScrollDown);
+        assert!((next.zoom_level - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn magnifier_zoom_clamped_at_8_0() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 8.0, ..Default::default() };
+        let next = process_event(&state, &InputEvent::ScrollUp);
+        assert!((next.zoom_level - 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn magnifier_zoom_clamped_at_1_5() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 1.5, ..Default::default() };
+        let next = process_event(&state, &InputEvent::ScrollDown);
+        assert!((next.zoom_level - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn scroll_without_magnifier_active_is_noop() {
+        let state = AppState { drawing: DrawingState::Armed, magnifier_active: false, zoom_level: 2.0, ..Default::default() };
+        let next = process_event(&state, &InputEvent::ScrollUp);
+        assert!((next.zoom_level - 2.0).abs() < f64::EPSILON);
+        assert!(!next.magnifier_active);
+    }
+
+    // --- Magnifier: modifier release resets magnifier_active, preserves zoom ---
+
+    #[test]
+    fn modifier_release_resets_magnifier_active_preserves_zoom() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 4.0,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert!(!next.magnifier_active);
+        assert!((next.zoom_level - 4.0).abs() < f64::EPSILON, "zoom_level must be preserved");
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn escape_resets_magnifier_active() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 3.0,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::EscapePressed);
+        assert!(!next.magnifier_active);
+        // zoom_level preserved
+        assert!((next.zoom_level - 3.0).abs() < f64::EPSILON);
+    }
+
+    // --- Magnifier independence with pinned/spotlight ---
+
+    #[test]
+    fn magnifier_and_pinned_independent() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(1));
+        let next = process_event(&next, &InputEvent::DigitPressed(3));
+        assert!(next.pinned_active);
+        assert!(next.magnifier_active);
+    }
+
+    #[test]
+    fn magnifier_and_spotlight_independent() {
+        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let next = process_event(&state, &InputEvent::DigitPressed(2));
+        let next = process_event(&next, &InputEvent::DigitPressed(3));
+        assert!(next.spotlight_active);
+        assert!(next.magnifier_active);
     }
 }
