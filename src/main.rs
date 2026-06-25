@@ -10,6 +10,7 @@ mod popup;
 mod mem_report;
 #[cfg(windows)]
 mod hook;
+mod magnifier;
 
 use std::sync::mpsc;
 use std::thread;
