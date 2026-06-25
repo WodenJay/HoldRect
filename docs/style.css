@@ -535,7 +535,7 @@ h3 {
 /* --- 15. Hero Brand --- */
 .hero-brand {
   background-color: var(--color-canvas);
-  padding: 0;
+  padding: 48px 0 0;
   margin: -16px 0;
   display: flex;
   justify-content: center;
