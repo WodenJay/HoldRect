@@ -140,8 +140,15 @@ impl MagnifierWindow {
                         pixel_slice[off + 2] = 0;
                         pixel_slice[off + 3] = 0;
                     } else if dist_sq > (center - BORDER_WIDTH as f64) * (center - BORDER_WIDTH as f64) {
-                        // Border region: rainbow color
-                        let (cr, cg, cb) = crate::overlay::color_at(col, row, 0, 0, d, d, color_mode, time_offset);
+                        // Border region: rainbow color using circular perimeter position
+                        let (cr, cg, cb) = match color_mode {
+                            crate::config::ColorMode::Solid { r, g, b } => (*r, *g, *b),
+                            crate::config::ColorMode::Rainbow => {
+                                let pos = circular_perimeter_position(col, row, d / 2, d / 2);
+                                let hue = (pos + time_offset).fract() * 360.0;
+                                crate::overlay::hsv_to_rgb(hue, 1.0, 1.0)
+                            }
+                        };
                         pixel_slice[off] = cb;     // B
                         pixel_slice[off + 1] = cg; // G
                         pixel_slice[off + 2] = cr; // R

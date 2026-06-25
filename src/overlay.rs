@@ -533,7 +533,7 @@ fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
 }
 
 /// Convert HSV to RGB. h: 0-360, s: 0-1, v: 0-1.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+pub(crate) fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
     let m = v - c;
