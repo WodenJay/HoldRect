@@ -61,6 +61,7 @@ impl PopupManager {
                 (drag_label, "Draw".to_string()),
                 ("1".to_string(), "Pin".to_string()),
                 ("2".to_string(), "Spotlight".to_string()),
+                ("3".to_string(), "Magnifier".to_string()),
                 ("Esc".to_string(), "Clear".to_string()),
                 (help_label, "Help".to_string()),
             ],
@@ -69,6 +70,17 @@ impl PopupManager {
 
     pub fn on_event(&mut self, event: &InputEvent, state: &AppState) {
         match event {
+            InputEvent::DigitPressed(3) => {
+                // Cheatsheet suppresses status popup (same rule as digit 1/2)
+                if self.content == PopupContent::Cheatsheet && self.phase != PopupPhase::Hidden {
+                    return;
+                }
+                if state.magnifier_active
+                    && matches!(state.drawing, crate::state::DrawingState::Armed | crate::state::DrawingState::Drawing { .. })
+                {
+                    self.show_status("Magnifier");
+                }
+            }
             InputEvent::DigitPressed(1) | InputEvent::DigitPressed(2) => {
                 // Cheatsheet suppresses status popup (spec: mutually exclusive)
                 if self.content == PopupContent::Cheatsheet && self.phase != PopupPhase::Hidden {
@@ -213,6 +225,7 @@ impl PopupManager {
             (drag_label, "Draw".to_string()),
             ("1".to_string(), "Pin".to_string()),
             ("2".to_string(), "Spotlight".to_string()),
+            ("3".to_string(), "Magnifier".to_string()),
             ("Esc".to_string(), "Clear".to_string()),
             (help_label, "Help".to_string()),
         ];
@@ -421,7 +434,7 @@ mod tests {
     fn cheatsheet_rows_built_from_modifier() {
         let m = PopupManager::new("Ctrl");
         assert_eq!(m.cheatsheet_rows[0].0, "Ctrl + drag");
-        assert_eq!(m.cheatsheet_rows[4].0, "Ctrl + `");
+        assert_eq!(m.cheatsheet_rows[5].0, "Ctrl + `");
     }
 
     // --- cheatsheet suppresses status ---
@@ -443,13 +456,14 @@ mod tests {
     fn update_modifier_name_rebuilds_cheatsheet_rows() {
         let mut m = PopupManager::new("Alt");
         assert_eq!(m.cheatsheet_rows()[0].0, "Alt + drag");
-        assert_eq!(m.cheatsheet_rows()[4].0, "Alt + `");
+        assert_eq!(m.cheatsheet_rows()[5].0, "Alt + `");
         m.update_modifier_name("Ctrl");
         assert_eq!(m.cheatsheet_rows()[0].0, "Ctrl + drag");
         assert_eq!(m.cheatsheet_rows()[1].0, "1");
         assert_eq!(m.cheatsheet_rows()[2].0, "2");
-        assert_eq!(m.cheatsheet_rows()[3].0, "Esc");
-        assert_eq!(m.cheatsheet_rows()[4].0, "Ctrl + `");
+        assert_eq!(m.cheatsheet_rows()[3].0, "3");
+        assert_eq!(m.cheatsheet_rows()[4].0, "Esc");
+        assert_eq!(m.cheatsheet_rows()[5].0, "Ctrl + `");
     }
 
     // --- on_event with HideHelp ---
@@ -473,5 +487,65 @@ mod tests {
         let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
         m.on_event(&InputEvent::DigitPressed(1), &state);
         assert_eq!(m.phase, PopupPhase::Hidden);
+    }
+
+    // --- magnifier popup ---
+
+    #[test]
+    fn on_digit_3_magnifier_active_shows_status() {
+        let mut m = make_manager();
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            ..Default::default()
+        };
+        m.on_event(&InputEvent::DigitPressed(3), &state);
+        assert!(matches!(m.phase, PopupPhase::SlidingIn { .. }));
+        assert_eq!(m.status_text, "Magnifier");
+    }
+
+    #[test]
+    fn on_digit_3_magnifier_inactive_no_popup() {
+        let mut m = make_manager();
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: false,
+            ..Default::default()
+        };
+        m.on_event(&InputEvent::DigitPressed(3), &state);
+        assert_eq!(m.phase, PopupPhase::Hidden);
+    }
+
+    #[test]
+    fn cheatsheet_includes_magnifier_row() {
+        let m = make_manager();
+        let rows = m.cheatsheet_rows();
+        assert!(rows.iter().any(|(k, v)| k == "3" && v == "Magnifier"));
+    }
+
+    #[test]
+    fn on_digit_3_while_idle_is_noop() {
+        let mut m = make_manager();
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            magnifier_active: true,
+            ..Default::default()
+        };
+        m.on_event(&InputEvent::DigitPressed(3), &state);
+        assert_eq!(m.phase, PopupPhase::Hidden);
+    }
+
+    #[test]
+    fn on_digit_3_suppressed_by_cheatsheet() {
+        let mut m = make_manager();
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            ..Default::default()
+        };
+        m.on_event(&InputEvent::ToggleHelp, &state);
+        assert_eq!(m.content, PopupContent::Cheatsheet);
+        m.on_event(&InputEvent::DigitPressed(3), &state);
+        assert_eq!(m.content, PopupContent::Cheatsheet);
     }
 }
