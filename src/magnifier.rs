@@ -33,7 +33,6 @@ pub struct MagnifierWindow {
 #[cfg(windows)]
 impl MagnifierWindow {
     pub fn new(diameter: i32, _overlay_hwnd: HWND) -> Self {
-        use windows::Win32::Foundation::COLORREF;
         use windows::Win32::Graphics::Gdi::*;
         use windows::Win32::UI::Magnification::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
@@ -70,7 +69,7 @@ impl MagnifierWindow {
             ).expect("Failed to create magnifier control");
 
             // Paint initial border onto the host's layered surface
-            Self::paint_border(host_hwnd, diameter, COLORREF(0x00FF00), &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 }, 0.0);
+            Self::paint_border(host_hwnd, diameter, &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 }, 0.0);
 
             Self { host_hwnd, mag_hwnd, diameter }
         }
@@ -79,7 +78,6 @@ impl MagnifierWindow {
     fn paint_border(
         hwnd: HWND,
         d: i32,
-        _fallback_color: windows::Win32::Foundation::COLORREF,
         color_mode: &crate::config::ColorMode,
         time_offset: f32,
     ) {
@@ -140,7 +138,6 @@ impl MagnifierWindow {
                 }
             }
 
-            let ppt_dst = POINT { x: 0, y: 0 };
             let size = SIZE { cx: d, cy: d };
             let ppt_src = POINT { x: 0, y: 0 };
             let blend = BLENDFUNCTION {
@@ -150,7 +147,7 @@ impl MagnifierWindow {
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
             let _ = UpdateLayeredWindow(
-                hwnd, screen_dc, Some(&ppt_dst), Some(&size),
+                hwnd, screen_dc, None, Some(&size),
                 mem_dc, Some(&ppt_src), COLORREF(0), Some(&blend), ULW_ALPHA,
             );
 
@@ -168,13 +165,13 @@ impl MagnifierWindow {
         }
     }
 
-    /// Update magnifier: position host window, set source rect + zoom transform.
+    /// Update magnifier: position host window, repaint border, set source rect + zoom.
     pub fn render(
         &mut self,
         cursor_pos: (i32, i32),
         zoom: f64,
-        _color_mode: &crate::config::ColorMode,
-        _time_offset: f32,
+        color_mode: &crate::config::ColorMode,
+        time_offset: f32,
     ) {
         use windows::Win32::Foundation::RECT;
         use windows::Win32::Graphics::Gdi::InvalidateRect;
@@ -214,6 +211,11 @@ impl MagnifierWindow {
                 cursor_pos.0 - r, cursor_pos.1 - r, d, d,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
+
+            // Repaint border (UpdateLayeredWindow persists content, but we
+            // repaint each frame to support animated rainbow and ensure the
+            // border is never lost after window repositioning).
+            Self::paint_border(self.host_hwnd, d, color_mode, time_offset);
 
             // Trigger magnifier repaint
             let _ = InvalidateRect(self.mag_hwnd, None, false);
