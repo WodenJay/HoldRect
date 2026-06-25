@@ -10,7 +10,7 @@ use crate::state::InputEvent;
 
 static SHOULD_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static DRAG_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
-static MAGNIFIER_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub(crate) static MAGNIFIER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
 static PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
 static MODIFIER_CODES: RwLock<Vec<u32>> = RwLock::new(Vec::new());

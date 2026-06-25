@@ -140,11 +140,16 @@ pub struct App {
     popup_renderer: Option<GdiRenderer>,
     popup_monitor_rect: (i32, i32, i32, i32), // cached at show time
     overlay_shown: bool,
+    #[cfg(windows)]
+    magnifier: Option<crate::magnifier::MagnifierWindow>,
 }
 
 #[cfg(windows)]
 impl Drop for App {
     fn drop(&mut self) {
+        if let Some(mag) = &self.magnifier {
+            mag.hide();
+        }
         if let Some(hwnd) = self.popup_hwnd {
             unsafe {
                 let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
@@ -172,6 +177,8 @@ impl App {
             popup_renderer: None,
             popup_monitor_rect: (0, 0, 1920, 1080),
             overlay_shown: false,
+            #[cfg(windows)]
+            magnifier: None,
         }
     }
 }
@@ -288,6 +295,8 @@ impl ApplicationHandler for App {
             let new_state = process_event(&self.state, &event);
             let was_hidden = !self.popup_manager.needs_frame();
             self.state = new_state;
+            // Wire magnifier_active to the atomic read by the mouse hook
+            crate::hook::MAGNIFIER_ACTIVE.store(self.state.magnifier_active, std::sync::atomic::Ordering::Relaxed);
             // Route to popup manager
             self.popup_manager.on_event(&event, &self.state);
             // Cache monitor rect when popup transitions from Hidden -> visible
@@ -310,6 +319,7 @@ impl ApplicationHandler for App {
 
         let needs_animation = matches!(&self.state.drawing, DrawingState::Drawing { .. })
             || !self.state.pinned_rects.is_empty()
+            || self.state.magnifier_active
             || self.popup_manager.needs_frame(); // keep event loop alive for popup animation
 
         if needs_animation {
@@ -329,7 +339,7 @@ impl App {
         let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
         let has_pinned = !self.state.pinned_rects.is_empty();
 
-        if !should_show_overlay(has_drawing, has_pinned) {
+        if !should_show_overlay(has_drawing, has_pinned, self.state.magnifier_active) {
             if self.overlay_shown {
                 #[cfg(windows)]
                 {
@@ -421,6 +431,21 @@ impl App {
             }
             show_window_topmost(window); // re-enforce Z-order every frame
             commit_dib(window, cache, width, height, wr.left, wr.top);
+
+            // Magnifier rendering (after overlay commit)
+            if self.state.magnifier_active {
+                let mag = self.magnifier.get_or_insert_with(|| {
+                    let overlay_hwnd = get_hwnd(window);
+                    crate::magnifier::MagnifierWindow::new(crate::magnifier::MAGNIFIER_DIAMETER, overlay_hwnd)
+                });
+                unsafe {
+                    let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor_pos);
+                    mag.render((cursor_pos.x, cursor_pos.y), self.state.zoom_level, &self.color_mode, time_offset);
+                }
+            } else if let Some(mag) = &self.magnifier {
+                mag.hide();
+            }
         }
     }
 }
@@ -481,8 +506,8 @@ fn show_window_topmost(window: &Window) {
 
 /// Whether the overlay should be visible based on current drawing state.
 /// Pure logic extracted from `render()` for testability.
-fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
-    has_drawing || has_pinned
+fn should_show_overlay(has_drawing: bool, has_pinned: bool, magnifier_active: bool) -> bool {
+    has_drawing || has_pinned || magnifier_active
 }
 
 /// Simulate multi-frame overlay state and return the number of times
@@ -492,7 +517,7 @@ fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
 fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
     let mut count = 0;
     for &(has_drawing, has_pinned) in frames {
-        if should_show_overlay(has_drawing, has_pinned) {
+        if should_show_overlay(has_drawing, has_pinned, false) {
             count += 1; // enforce topmost EVERY visible frame
         }
     }
@@ -1808,22 +1833,32 @@ modifier = "Ctrl""#;
 
     #[test]
     fn overlay_hidden_when_no_content() {
-        assert!(!should_show_overlay(false, false));
+        assert!(!should_show_overlay(false, false, false));
     }
 
     #[test]
     fn overlay_shown_when_drawing() {
-        assert!(should_show_overlay(true, false));
+        assert!(should_show_overlay(true, false, false));
     }
 
     #[test]
     fn overlay_shown_when_pinned() {
-        assert!(should_show_overlay(false, true));
+        assert!(should_show_overlay(false, true, false));
     }
 
     #[test]
     fn overlay_shown_when_both() {
-        assert!(should_show_overlay(true, true));
+        assert!(should_show_overlay(true, true, false));
+    }
+
+    #[test]
+    fn overlay_shown_when_magnifier_active() {
+        assert!(should_show_overlay(false, false, true));
+    }
+
+    #[test]
+    fn overlay_hidden_when_all_false() {
+        assert!(!should_show_overlay(false, false, false));
     }
 
     // -- topmost_enforce_count tests --
