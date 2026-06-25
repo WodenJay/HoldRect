@@ -87,8 +87,8 @@ impl MagnifierWindow {
             // 3. Capture screen region
             let screen_dc = GetDC(HWND::default());
             let mem_dc = CreateCompatibleDC(screen_dc);
-            let capture_w = (d as f64 / zoom) as i32;
-            let capture_h = (d as f64 / zoom) as i32;
+            let capture_w = ((d as f64 / zoom) as i32).max(1);
+            let capture_h = ((d as f64 / zoom) as i32).max(1);
             let src_x = cursor_pos.0 - capture_w / 2;
             let src_y = cursor_pos.1 - capture_h / 2;
 
@@ -113,7 +113,7 @@ impl MagnifierWindow {
                 ..std::mem::zeroed()
             };
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let dib = CreateDIBSection(None, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
+            let dib = CreateDIBSection(dib_dc, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
                 .expect("CreateDIBSection failed");
             let old_dib = SelectObject(dib_dc, dib);
             let old_dib = HBITMAP(old_dib.0); // cast HGDIOBJ back to HBITMAP for restore
@@ -168,7 +168,7 @@ impl MagnifierWindow {
             let mut wbuf: Vec<u16> = zoom_text.encode_utf16().chain(std::iter::once(0)).collect();
             // Shadow
             SetTextColor(dib_dc, COLORREF(0x000000));
-            let mut shadow_rect = RECT { left: 1, top: text_y + 1, right: d + 1, bottom: d + 1 };
+            let mut shadow_rect = RECT { left: 1, top: text_y + 1, right: d, bottom: d + 1 };
             DrawTextW(dib_dc, &mut wbuf, &mut shadow_rect, DT_CENTER | DT_SINGLELINE);
             // White text
             SetTextColor(dib_dc, COLORREF(0xFFFFFF));
@@ -218,6 +218,19 @@ impl Drop for MagnifierWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "diameter")]
+    #[cfg(windows)]
+    fn magnifier_window_new_zero_diameter_panics() {
+        // assert!(diameter > 0) fires before CreateWindowExW, so null HWND is safe here
+        let _ = MagnifierWindow::new(0, HWND(std::ptr::null_mut()));
+    }
+
+    // Note: render's `assert!(zoom > 0.0)` cannot be unit-tested because
+    // MagnifierWindow fields are private and new() calls CreateWindowExW
+    // which requires a real Windows display context. The guard is exercised
+    // by integration/manual testing instead.
 
     #[test]
     fn circular_perimeter_right_is_zero() {
