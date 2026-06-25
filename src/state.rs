@@ -120,7 +120,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
         }
         // Armed -> Idle on modifier release
         (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => {
-            (DrawingState::Idle, false, false, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
+            (DrawingState::Idle, false, false, false, state.zoom_level, state.pinned_rects.clone())
         }
         // Drawing -> Idle on modifier release
         (DrawingState::Drawing { start, current }, InputEvent::ModifierChanged { pressed: false }) => {
@@ -129,7 +129,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                 let (x0, y0, x1, y1) = normalize_rect(*start, *current);
                 rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
             }
-            (DrawingState::Idle, false, false, state.magnifier_active, state.zoom_level, rects)
+            (DrawingState::Idle, false, false, false, state.zoom_level, rects)
         }
         // --- DigitPressed(3) magnifier toggle (only in Armed or Drawing) ---
         (DrawingState::Armed, InputEvent::DigitPressed(3)) => {
@@ -904,33 +904,6 @@ mod tests {
         assert!(!next.magnifier_active);
     }
 
-    // --- Magnifier: modifier release preserves magnifier_active (toggle via Alt+3, not modifier release) ---
-
-    #[test]
-    fn modifier_release_preserves_magnifier_active() {
-        let state = AppState {
-            drawing: DrawingState::Armed,
-            magnifier_active: true,
-            zoom_level: 4.0,
-            ..Default::default()
-        };
-        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(next.magnifier_active, "magnifier_active must persist after modifier release");
-        assert!((next.zoom_level - 4.0).abs() < f64::EPSILON, "zoom_level must be preserved");
-        assert_eq!(next.drawing, DrawingState::Idle);
-    }
-
-    #[test]
-    fn drawing_modifier_release_preserves_magnifier_active() {
-        let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
-            magnifier_active: true,
-            ..Default::default()
-        };
-        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(next.magnifier_active, "magnifier_active must persist after modifier release during drawing");
-    }
-
     #[test]
     fn escape_resets_magnifier_active() {
         let state = AppState {
@@ -963,5 +936,31 @@ mod tests {
         let next = process_event(&next, &InputEvent::DigitPressed(3));
         assert!(next.spotlight_active);
         assert!(next.magnifier_active);
+    }
+
+    // --- Modifier release resets magnifier_active ---
+
+    #[test]
+    fn modifier_release_resets_magnifier_active() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert!(!next.magnifier_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    #[test]
+    fn drawing_modifier_release_resets_magnifier_active() {
+        let state = AppState {
+            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            magnifier_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
+        assert!(!next.magnifier_active);
+        assert_eq!(next.drawing, DrawingState::Idle);
     }
 }
