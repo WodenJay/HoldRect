@@ -72,13 +72,9 @@ impl MagnifierWindow {
             let d = self.diameter;
             let r = d / 2;
 
-            // Position window at cursor (edge-clamped)
-            let virt_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-            let virt_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-            let virt_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-            let virt_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-            let x = (cursor_pos.0 - r).clamp(virt_x, virt_x + virt_w - d);
-            let y = (cursor_pos.1 - r).clamp(virt_y, virt_y + virt_h - d);
+            // Position window centered on cursor (may extend past screen edges)
+            let x = cursor_pos.0 - r;
+            let y = cursor_pos.1 - r;
 
             // Capture screen region (no need to hide — UpdateLayeredWindow
             // handles visibility atomically, no flicker)

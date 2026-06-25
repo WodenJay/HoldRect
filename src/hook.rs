@@ -121,7 +121,7 @@ unsafe extern "system" fn mouse_hook_proc(
         let drag = DRAG_IN_PROGRESS.load(Ordering::Relaxed);
 
         let magnifier = MAGNIFIER_ACTIVE.load(Ordering::Relaxed);
-        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, modifier_held, magnifier, w_param.0 as isize);
+        let (event, should_suppress) = decide_mouse(msg, pt, suppress, drag, modifier_held, magnifier, ms.mouseData as isize);
 
         // Update DRAG_IN_PROGRESS based on decision.
         // Gated on `should_suppress` because decide_mouse returns true exactly
@@ -192,12 +192,15 @@ pub(crate) fn decide_mouse(
     drag_in_progress: bool,
     modifier_held: bool,
     magnifier_active: bool,
-    wparam: isize,
+    mouse_data: isize,
 ) -> (Option<InputEvent>, bool) {
     // Handle scroll wheel BEFORE drag_in_progress check
     if msg == WM_MOUSEWHEEL {
-        if modifier_held && magnifier_active {
-            let delta = ((wparam >> 16) & 0xFFFF) as i16 as i32; // GET_WHEEL_DELTA_WPARAM
+        if magnifier_active {
+            let delta = ((mouse_data >> 16) & 0xFFFF) as i16;
+            if delta == 0 {
+                return (None, false);
+            }
             let event = if delta > 0 { InputEvent::ScrollUp } else { InputEvent::ScrollDown };
             return (Some(event), true); // suppress scroll when magnifier active
         }
@@ -731,42 +734,42 @@ mod tests {
 
     #[test]
     fn mouse_scroll_up_magnifier_active() {
-        let wparam: isize = (120i32 << 16) as isize; // positive delta = scroll up
-        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, true, wparam);
+        let mouse_data: isize = (120i32 << 16) as isize; // positive delta = scroll up
+        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, true, mouse_data);
         assert_eq!(event, Some(InputEvent::ScrollUp));
         assert!(suppress);
     }
 
     #[test]
     fn mouse_scroll_down_magnifier_active() {
-        let wparam: isize = (-120i32 as u32 as isize) << 16; // negative delta
-        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, true, wparam);
+        let mouse_data: isize = (-120i32 as u32 as isize) << 16; // negative delta
+        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, true, mouse_data);
         assert_eq!(event, Some(InputEvent::ScrollDown));
         assert!(suppress);
     }
 
     #[test]
     fn mouse_scroll_magnifier_not_active_passes_through() {
-        // modifier_held=true, magnifier_active=false -> scroll passes through
-        let wparam: isize = (120i32 << 16) as isize;
-        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, false, wparam);
+        let mouse_data: isize = (120i32 << 16) as isize;
+        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, false, mouse_data);
         assert_eq!(event, None);
         assert!(!suppress);
     }
 
     #[test]
-    fn mouse_scroll_modifier_not_held_passes_through() {
-        let wparam: isize = (120i32 << 16) as isize;
-        let (event, suppress) = decide_mouse(0x020A, (100, 200), false, false, false, false, wparam);
-        assert_eq!(event, None);
-        assert!(!suppress);
+    fn mouse_scroll_modifier_not_held_magnifier_active_still_works() {
+        // modifier released but magnifier still active — scroll should work
+        let mouse_data: isize = (120i32 << 16) as isize;
+        let (event, suppress) = decide_mouse(0x020A, (100, 200), false, false, false, true, mouse_data);
+        assert_eq!(event, Some(InputEvent::ScrollUp));
+        assert!(suppress);
     }
 
     #[test]
     fn mouse_scroll_during_drag_magnifier_active_still_works() {
         // WM_MOUSEWHEEL handled BEFORE drag_in_progress check
-        let wparam: isize = (120i32 << 16) as isize;
-        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, true, true, true, wparam);
+        let mouse_data: isize = (120i32 << 16) as isize;
+        let (event, suppress) = decide_mouse(0x020A, (100, 200), true, true, true, true, mouse_data);
         assert_eq!(event, Some(InputEvent::ScrollUp));
         assert!(suppress);
     }

@@ -68,6 +68,6 @@ fn main() {
 fn set_dpi_awareness() {
     use windows::Win32::UI::HiDpi::*;
     unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 }
