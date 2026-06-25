@@ -336,6 +336,29 @@ impl App {
     fn render(&mut self) {
         let Some(window) = &self.window else { return; };
 
+        // Magnifier rendering (before overlay DIB path to avoid allocating
+        // the full overlay DIB when only the magnifier is active)
+        {
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
+
+            if self.state.magnifier_active {
+                let mag = self.magnifier.get_or_insert_with(|| {
+                    let overlay_hwnd = get_hwnd(window);
+                    crate::magnifier::MagnifierWindow::new(crate::magnifier::MAGNIFIER_DIAMETER, overlay_hwnd)
+                });
+                unsafe {
+                    let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor_pos);
+                    mag.render((cursor_pos.x, cursor_pos.y), self.state.zoom_level, &self.color_mode, time_offset);
+                }
+            } else if let Some(mag) = &self.magnifier {
+                mag.hide();
+            }
+        }
+
         let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
         let has_pinned = !self.state.pinned_rects.is_empty();
 
@@ -431,21 +454,6 @@ impl App {
             }
             show_window_topmost(window); // re-enforce Z-order every frame
             commit_dib(window, cache, width, height, wr.left, wr.top);
-
-            // Magnifier rendering (after overlay commit)
-            if self.state.magnifier_active {
-                let mag = self.magnifier.get_or_insert_with(|| {
-                    let overlay_hwnd = get_hwnd(window);
-                    crate::magnifier::MagnifierWindow::new(crate::magnifier::MAGNIFIER_DIAMETER, overlay_hwnd)
-                });
-                unsafe {
-                    let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor_pos);
-                    mag.render((cursor_pos.x, cursor_pos.y), self.state.zoom_level, &self.color_mode, time_offset);
-                }
-            } else if let Some(mag) = &self.magnifier {
-                mag.hide();
-            }
         }
     }
 }
