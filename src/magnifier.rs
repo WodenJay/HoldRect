@@ -72,19 +72,16 @@ impl MagnifierWindow {
             let d = self.diameter;
             let r = d / 2;
 
-            // 1. Hide to avoid capturing ourselves
-            let _ = ShowWindow(self.hwnd, SW_HIDE);
-
-            // 2. Position window at cursor (edge-clamped)
+            // Position window at cursor (edge-clamped)
             let virt_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
             let virt_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
             let virt_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
             let virt_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
             let x = (cursor_pos.0 - r).clamp(virt_x, virt_x + virt_w - d);
             let y = (cursor_pos.1 - r).clamp(virt_y, virt_y + virt_h - d);
-            let _ = SetWindowPos(self.hwnd, None, x, y, d, d, SWP_NOACTIVATE | SWP_NOZORDER);
 
-            // 3. Capture screen region
+            // Capture screen region (no need to hide — UpdateLayeredWindow
+            // handles visibility atomically, no flicker)
             let screen_dc = GetDC(HWND::default());
             let mem_dc = CreateCompatibleDC(screen_dc);
             let capture_w = ((d as f64 / zoom) as i32).max(1);
@@ -183,7 +180,9 @@ impl MagnifierWindow {
             SelectObject(dib_dc, old_font);
             let _ = DeleteObject(font);
 
-            // 8. UpdateLayeredWindow
+            // 8. UpdateLayeredWindow — atomically sets position, size, and content
+            //    First call shows the window; subsequent calls update in-place.
+            //    No ShowWindow needed = no flicker.
             let ppt_dst = POINT { x, y };
             let size = SIZE { cx: d, cy: d };
             let ppt_src = POINT { x: 0, y: 0 };
@@ -206,9 +205,6 @@ impl MagnifierWindow {
             let _ = DeleteDC(dib_dc);
             let _ = DeleteDC(mem_dc);
             let _ = ReleaseDC(HWND::default(), screen_dc);
-
-            // 10. Show
-            let _ = ShowWindow(self.hwnd, SW_SHOW);
         }
     }
 }
