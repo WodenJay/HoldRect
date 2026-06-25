@@ -30,6 +30,7 @@ pub struct MagnifierWindow {
 impl MagnifierWindow {
     pub fn new(diameter: i32, overlay_hwnd: HWND) -> Self {
         use windows::Win32::UI::WindowsAndMessaging::*;
+        assert!(diameter > 0, "magnifier diameter must be positive, got {diameter}");
 
         unsafe {
             let hwnd = CreateWindowExW(
@@ -67,6 +68,7 @@ impl MagnifierWindow {
         use windows::Win32::UI::WindowsAndMessaging::*;
 
         unsafe {
+            assert!(zoom > 0.0, "magnifier zoom must be positive, got {zoom}");
             let d = self.diameter;
             let r = d / 2;
 
@@ -200,6 +202,15 @@ impl MagnifierWindow {
 
             // 10. Show
             let _ = ShowWindow(self.hwnd, SW_SHOW);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for MagnifierWindow {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.hwnd);
         }
     }
 }
