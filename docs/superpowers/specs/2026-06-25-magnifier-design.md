@@ -66,22 +66,33 @@ pub struct AppState {
 }
 ```
 
-新增 process_event 分支:
+新增/修改 process_event 分支:
 
 | State | Event | Effect |
 |-------|-------|--------|
-| Armed \| Drawing | DigitPressed(3) | toggle magnifier_active |
-| magnifier_active | ScrollUp | zoom_level = (zoom_level + 0.5).min(8.0) |
-| magnifier_active | ScrollDown | zoom_level = (zoom_level - 0.5).max(1.5) |
-| * | ModifierChanged { false } | magnifier_active = false, zoom_level unchanged |
-| * | EscapePressed | magnifier_active = false |
+| Armed \| Drawing | DigitPressed(3) | toggle magnifier_active (新增 arm) |
+| magnifier_active | ScrollUp | zoom_level = (zoom_level + 0.5).min(8.0) (新增 arm) |
+| magnifier_active | ScrollDown | zoom_level = (zoom_level - 0.5).max(1.5) (新增 arm) |
+| * | ModifierChanged { false } | **扩展现有 arm**: magnifier_active = false, zoom_level unchanged |
+| * | EscapePressed | **扩展现有 arm**: magnifier_active = false |
+
+**注意**: `DigitPressed(3)` 复用现有 `InputEvent::DigitPressed(u8)` 变体, 无需新增枚举成员.
+
+`process_event` 的返回值解构必须扩展:
+```rust
+// 现有: (drawing, pinned_active, spotlight_active, pinned_rects)
+// 改为: (drawing, pinned_active, spotlight_active, magnifier_active, zoom_level, pinned_rects)
+```
+
+现有 `ModifierChanged { pressed: false }` arm (state.rs:116, 120) 和 `EscapePressed` arm (state.rs:83) 需要额外设置 `magnifier_active = false`.
 
 ### Input Hook (hook.rs)
 
 #### decide_keyboard
 
 ```rust
-// 新增: vk_code 0x33 ('3') → DigitPressed(3)
+// 新增: 在已有的 if is_key_down { ... } 块内, vk_code 0x33 ('3') → DigitPressed(3)
+// 不能放在 is_key_down 块外, 否则 key-up 也会触发 toggle
 if modifier_held && vk_code == 0x33 {
     return Some(InputEvent::DigitPressed(3));
 }
@@ -90,7 +101,8 @@ if modifier_held && vk_code == 0x33 {
 #### decide_mouse
 
 ```rust
-// 新增: WM_MOUSEWHEEL 处理
+// 新增: WM_MOUSEWHEEL 必须在 drag_in_progress early-return 之前处理
+// 否则 Drawing 状态下滚轮事件会被 (None, false) 丢弃
 WM_MOUSEWHEEL => {
     if modifier_held {
         let delta = /* GET_WHEEL_DELTA_WPARAM */;
@@ -104,15 +116,19 @@ WM_MOUSEWHEEL => {
 
 `should_suppress = true` — modifier 按住时拦截滚轮, 防止其他应用响应.
 
+**注意**: 仅当 `magnifier_active` 时才 suppress scroll. modifier 按住但未按 3 时, 滚轮应正常传递给其他应用. `decide_mouse` 需要访问 `magnifier_active` 状态 (通过参数传入或读取全局状态).
+
 ### InputEvent 扩展 (state.rs)
 
 ```rust
 pub enum InputEvent {
-    // ... existing variants ...
+    // ... existing variants (包括 DigitPressed(u8)) ...
     ScrollUp,    // NEW
     ScrollDown,  // NEW
 }
 ```
+
+`DigitPressed(3)` 复用现有 `DigitPressed(u8)` 变体, 无需新增枚举成员.
 
 ### Magnifier Window (magnifier.rs)
 
@@ -124,6 +140,7 @@ pub enum InputEvent {
 - Position: cursor_pos - (diameter/2, diameter/2)
 - 不在任务栏显示 (WS_EX_TOOLWINDOW)
 - 不激活 (不抢焦点)
+- **Owner**: overlay 窗口 (通过 `SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, overlay_hwnd)` 设置), 保证 Z-order 在 overlay 之上
 
 #### Render Cycle (每帧)
 
@@ -133,13 +150,14 @@ pub enum InputEvent {
 3. StretchBlt(mem_dc → dib_dc)      // 放大到 直径 × 直径
 4. 圆形裁剪:
    BeginPath → Ellipse → EndPath → SelectClipPath
-5. 彩虹描边边框 (复用 color_at 模式)
+5. 彩虹描边边框 (见下方说明)
 6. 倍率文字 ("2.0x") 在底部居中
-7. UpdateLayeredWindow              // 提交到屏幕
-8. ShowWindow(hwnd, SW_SHOW)        // 显示
+7. UpdateLayeredWindow              // 先提交新内容到窗口
+8. ShowWindow(hwnd, SW_SHOW)        // 再显示 — 此时窗口已携带新内容, 无闪烁
 ```
 
-步骤 1-8 在同一帧内完成, 无闪烁. `UpdateLayeredWindow` 是原子操作, 替换整个窗口内容.
+步骤 7 在 8 之前: `UpdateLayeredWindow` 先写入新像素, `SW_SHOW` 再显示窗口.
+窗口从隐藏直接跳到新内容, 中间无 stale 帧, 所以无闪烁.
 
 #### 圆形裁剪
 
@@ -154,7 +172,7 @@ SelectClipPath(hdc, RGN_COPY);
 
 #### 彩虹描边
 
-使用与 overlay 相同的 `color_at` 逻辑, 沿圆形周长计算 hue 值:
+圆形描边需要新的 `circular_perimeter_position` 函数 (角度 → 0..1), 不能直接复用现有的矩形 `perimeter_position`. 实现: `atan2(y - cy, x - cx) / (2π)`.
 - 描边宽度: 4px (固定)
 - 两 pass 渲染: Pass 1 用圆形裁剪绘制放大内容; Pass 2 取消裁剪, 绘制描边 (描边不被裁剪)
 
