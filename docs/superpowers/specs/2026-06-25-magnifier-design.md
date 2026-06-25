@@ -206,6 +206,20 @@ if self.state.magnifier_active {
 `magnifier.render()` 内部完成: 隐藏 → 捕获 → 放大 → 裁剪 → 描边 → 文字 → 提交 → 显示.
 `magnifier_active` 已保证只在 modifier 按住时为 true (modifier release 重置为 false), 无需额外检查 modifier_is_held.
 
+**注意**: 放大镜渲染放在 `render()` 末尾, 但必须在 `should_show_overlay` early return **之后** (即 overlay 已确认需要显示时).
+如果 overlay 不需要显示 (无 drawing, 无 pinned rects), 放大镜仍需独立渲染.
+解决方案: 将放大镜渲染逻辑放在 `should_show_overlay` 判断**之前**, 或在 early return 路径中也检查 magnifier_active.
+
+**注意**: `needs_animation` 条件 (overlay.rs:311) 需要加入 `self.state.magnifier_active`,
+否则无 drawing/pinned rects 时 event loop 进入 Wait 状态, 放大镜停止渲染.
+
+**注意**: 放大镜通过 BitBlt 捕获原始屏幕内容, 不包含 overlay 的 dimming 效果.
+这是预期行为 — 放大镜显示的是 overlay 下方的实际内容.
+Spotlight dimming 和放大镜可以同时存在, 视觉上放大镜"穿透"了 dimming 层.
+
+**注意**: 光标靠近屏幕边缘时, 放大镜窗口会部分超出屏幕.
+使用 `GetSystemMetrics(SM_XVIRTUALSCREEN)` 等 API 将窗口位置 clamp 到虚拟屏幕范围内.
+
 ## Visual Design
 
 ```

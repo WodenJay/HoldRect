@@ -328,28 +328,14 @@ if modifier_held && vk_code == 0x33 {
 Run: `cargo test --lib hook::tests::digit_3 2>&1`
 Expected: ALL PASS
 
-- [ ] **Step 5: Write failing tests for WM_MOUSEWHEEL**
+- [ ] **Step 5: Update decide_mouse signature + add MAGNIFIER_ACTIVE**
 
+Add `MAGNIFIER_ACTIVE` static to `src/hook.rs` (near the existing `SHOULD_SUPPRESS`):
 ```rust
-// --- WM_MOUSEWHEEL (magnifier zoom) ---
-
-#[test]
-fn mouse_scroll_up_modifier_held_emits_scroll_up() {
-    // WM_MOUSEWHEEL = 0x020A, positive delta = scroll up
-    // decide_mouse needs a new parameter for magnifier_active
-    // For now test with existing signature — will need signature change
-}
-
-#[test]
-fn mouse_scroll_modifier_not_held_is_none() {
-    let (event, suppress) = decide_mouse(0x020A, (100, 200), false, false, false);
-    assert_eq!(event, None);
-    assert!(!suppress);
-}
+static MAGNIFIER_ACTIVE: AtomicBool = AtomicBool::new(false);
 ```
 
-**Important:** `decide_mouse` needs two new parameters: `magnifier_active: bool` (to decide whether to suppress scroll) and `wparam: isize` (to extract WM_MOUSEWHEEL delta). Update signature:
-
+Update `decide_mouse` signature to add `magnifier_active` and `wparam`:
 ```rust
 pub(crate) fn decide_mouse(
     msg: u32,
@@ -362,56 +348,21 @@ pub(crate) fn decide_mouse(
 ) -> (Option<InputEvent>, bool)
 ```
 
-Update **ALL** existing callers of `decide_mouse`:
-- `mouse_hook_proc` in hook.rs: pass `MAGNIFIER_ACTIVE.load(Ordering::Relaxed)` and `w_param.0 as isize`
-- All 30+ test calls in hook.rs: add `false, 0` as last two args
-- All 15+ test calls in overlay.rs: add `false, 0` as last two args
+Update **ALL** existing callers:
+- `mouse_hook_proc` (hook.rs:97): pass `MAGNIFIER_ACTIVE.load(Ordering::Relaxed)` and `w_param.0 as isize`
+- All test calls in hook.rs (~33 sites): add `false, 0` as last two args
+- All test calls in overlay.rs (~18 sites): add `false, 0` as last two args
 
-**Breaking test fix:** Existing test `mouse_unknown_message_during_drag_is_noop` uses `WM_MOUSEWHEEL` (0x020A) as an "unknown message". With the new WM_MOUSEWHEEL handling (before drag_in_progress check), this test will now match the scroll handler. Update the test to use a truly unknown message code (e.g., `0x020B` = WM_XBUTTONDOWN) instead.
+**Breaking test fix:** Tests `mouse_unknown_message_during_drag_is_noop` (hook.rs:491) and `mouse_unknown_message_outside_drag_suppress_modifier_held_is_noop` (hook.rs:499) use `WM_MOUSEWHEEL` (0x020A) as an "unknown message". Change both to use `0x020B` (WM_XBUTTONDOWN) instead.
 
-- [ ] **Step 6: Write complete scroll tests**
+- [ ] **Step 6: Verify existing tests still pass**
 
-```rust
-#[test]
-fn mouse_scroll_up_modifier_held_magnifier_active_emits_scroll_up() {
-    let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, true);
-    assert_eq!(event, Some(InputEvent::ScrollUp));
-    assert!(suppress, "scroll should be suppressed when magnifier active");
-}
-
-#[test]
-fn mouse_scroll_down_modifier_held_magnifier_active_emits_scroll_down() {
-    // negative delta = scroll down, but decide_mouse only sees the message code
-    // WM_MOUSEWHEEL = 0x020A for both directions; delta is in wParam
-    // We need to extract delta from wParam in the real hook, but decide_mouse
-    // receives the raw msg. Need to split into WM_MOUSEWHEEL_UP / WM_MOUSEWHEEL_DOWN
-    // OR pass delta as a separate parameter.
-}
-```
-
-**Design decision:** `WM_MOUSEWHEEL` carries the delta in the high word of wParam. The `decide_mouse` function receives `msg: u32` but not wParam. Two options:
-1. Change `decide_mouse` signature to include `wparam: u32`
-2. In `mouse_hook_proc`, extract delta before calling `decide_mouse`, and pass a synthetic msg
-
-**Recommended:** Option 1 — add `wparam: isize` parameter to `decide_mouse`. In the hook, pass `w_param.0 as isize`. In tests, pass the delta directly.
-
-Updated signature:
-```rust
-pub(crate) fn decide_mouse(
-    msg: u32,
-    pt: (i32, i32),
-    should_suppress: bool,
-    drag_in_progress: bool,
-    modifier_held: bool,
-    magnifier_active: bool,
-    wparam: isize,  // NEW — for WM_MOUSEWHEEL delta extraction
-) -> (Option<InputEvent>, bool)
-```
+Run: `cargo test --lib hook::tests 2>&1`
+Expected: ALL PASS
 
 - [ ] **Step 7: Implement WM_MOUSEWHEEL in decide_mouse**
 
-Add before the `drag_in_progress` early-return block (spec requirement: WM_MOUSEWHEEL must not be blocked by drag):
-
+Add **before** the `drag_in_progress` early-return block:
 ```rust
 // Handle scroll wheel BEFORE drag_in_progress check
 if msg == WM_MOUSEWHEEL {
@@ -424,12 +375,7 @@ if msg == WM_MOUSEWHEEL {
 }
 ```
 
-- [ ] **Step 8: Update all decide_mouse callers with new parameters**
-
-- `mouse_hook_proc`: pass `magnifier_active` from a new `MAGNIFIER_ACTIVE` AtomicBool, pass `w_param.0 as isize`
-- All test calls: add `false, 0` (magnifier_active=false, wparam=0) as last two args
-
-- [ ] **Step 9: Write final scroll tests**
+- [ ] **Step 8: Write and run all scroll tests**
 
 ```rust
 #[test]
@@ -450,6 +396,7 @@ fn mouse_scroll_down_magnifier_active() {
 
 #[test]
 fn mouse_scroll_magnifier_not_active_passes_through() {
+    // modifier_held=true, magnifier_active=false → scroll passes through
     let wparam: isize = (120i32 << 16) as isize;
     let (event, suppress) = decide_mouse(0x020A, (100, 200), true, false, true, false, wparam);
     assert_eq!(event, None);
@@ -466,6 +413,7 @@ fn mouse_scroll_modifier_not_held_passes_through() {
 
 #[test]
 fn mouse_scroll_during_drag_magnifier_active_still_works() {
+    // WM_MOUSEWHEEL handled BEFORE drag_in_progress check
     let wparam: isize = (120i32 << 16) as isize;
     let (event, suppress) = decide_mouse(0x020A, (100, 200), true, true, true, true, wparam);
     assert_eq!(event, Some(InputEvent::ScrollUp));
@@ -473,12 +421,10 @@ fn mouse_scroll_during_drag_magnifier_active_still_works() {
 }
 ```
 
-- [ ] **Step 10: Run all hook tests**
-
 Run: `cargo test --lib hook::tests 2>&1`
 Expected: ALL PASS
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/hook.rs
@@ -569,7 +515,7 @@ pub struct MagnifierWindow {
 
 #[cfg(windows)]
 impl MagnifierWindow {
-    pub fn new(diameter: i32) -> Self {
+    pub fn new(diameter: i32, overlay_hwnd: HWND) -> Self {
         // Window creation will be implemented in Task 4
         todo!("MagnifierWindow::new")
     }
@@ -693,7 +639,7 @@ pub fn render(&mut self, cursor_pos: (i32, i32), zoom: f64, color_mode: &crate::
                 biHeight: -d, // top-down
                 biPlanes: 1,
                 biBitCount: 32,
-                biCompression: BI_RGB.0,
+                biCompression: BI_RGB.0 as u32,
                 biSizeImage: (d * d * 4) as u32,
                 ..std::mem::zeroed()
             },
@@ -706,6 +652,7 @@ pub fn render(&mut self, cursor_pos: (i32, i32), zoom: f64, color_mode: &crate::
 
         // 5. StretchBlt captured content into DIB (scaled up)
         SetStretchBltMode(dib_dc, HALFTONE);
+        SetBrushOrgEx(dib_dc, 0, 0, None); // required after HALFTONE
         let _ = StretchBlt(dib_dc, 0, 0, d, d, Some(mem_dc), 0, 0, capture_w, capture_h, SRCCOPY);
 
         // 6. Circular clip — clear outside circle
@@ -740,17 +687,18 @@ pub fn render(&mut self, cursor_pos: (i32, i32), zoom: f64, color_mode: &crate::
         // 7. Draw zoom text ("2.0x") at bottom center
         let zoom_text = format!("{:.1}x", zoom);
         SetBkMode(dib_dc, TRANSPARENT);
-        // White text with black shadow for readability
-        let font = CreateFontW(20, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, 0, 0, CLEARTYPE_QUALITY, 0, windows::core::w!("Segoe UI"));
+        let font = CreateFontW(16, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, DEFAULT_CHARSET.0 as u32, 0, 0, CLEARTYPE_QUALITY, 0, windows::core::w!("Segoe UI"));
         let old_font = SelectObject(dib_dc, font.into());
         let text_y = d - 25;
+        let mut text_rect = RECT { left: 0, top: text_y, right: d, bottom: d };
+        let wbuf: Vec<u16> = zoom_text.encode_utf16().chain(std::iter::once(0)).collect();
         // Shadow
         SetTextColor(dib_dc, COLORREF(0x000000));
-        let text_w = windows::core::w!("2.0x"); // measure roughly
-        TextOutW(dib_dc, d / 2 - 15 + 1, text_y + 1, &windows::core::HSTRING::from(&zoom_text));
+        let mut shadow_rect = RECT { left: 1, top: text_y + 1, right: d + 1, bottom: d + 1 };
+        DrawTextW(dib_dc, &wbuf, &mut shadow_rect, DT_CENTER | DT_SINGLELINE);
         // White text
         SetTextColor(dib_dc, COLORREF(0xFFFFFF));
-        TextOutW(dib_dc, d / 2 - 15, text_y, &windows::core::HSTRING::from(&zoom_text));
+        DrawTextW(dib_dc, &wbuf, &mut text_rect, DT_CENTER | DT_SINGLELINE);
         SelectObject(dib_dc, old_font);
         let _ = DeleteObject(font.into());
 
@@ -826,7 +774,23 @@ In `App::new()`, add `magnifier: None` to the struct literal.
 
 - [ ] **Step 3: Add magnifier rendering to render()**
 
-At the end of `render()`, after `commit_dib(...)` and before the closing `}`:
+Magnifier rendering must work even when overlay is hidden (no drawing, no pinned rects). Two changes:
+
+**3a.** In `should_show_overlay` (overlay.rs:484), add magnifier_active:
+```rust
+fn should_show_overlay(has_drawing: bool, has_pinned: bool, magnifier_active: bool) -> bool {
+    has_drawing || has_pinned || magnifier_active
+}
+```
+
+Update the call site at render(): pass `self.state.magnifier_active`.
+
+**3b.** In `needs_animation` (overlay.rs:311), add magnifier_active:
+```rust
+let needs_animation = has_drawing || has_pinned || self.state.magnifier_active || popup_animating;
+```
+
+**3c.** At the end of `render()`, after `commit_dib(...)`:
 
 ```rust
 // Magnifier rendering (after overlay commit)
