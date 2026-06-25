@@ -19,84 +19,83 @@ pub fn circular_perimeter_position(x: i32, y: i32, cx: i32, cy: i32) -> f32 {
 #[cfg(windows)]
 use windows::Win32::Foundation::HWND;
 
-/// Magnifier window -- separate WS_POPUP with circular clip, screen capture, zoom.
+/// Magnifier window — host window with circular region + child magnification control.
+///
+/// Uses Windows Magnification API (`MagSetWindowSource`) which automatically
+/// excludes the magnifier from its own capture source, avoiding recursive zoom.
 #[cfg(windows)]
 pub struct MagnifierWindow {
-    hwnd: HWND,
+    host_hwnd: HWND,
+    mag_hwnd: HWND,
     diameter: i32,
 }
 
 #[cfg(windows)]
 impl MagnifierWindow {
-    pub fn new(diameter: i32, overlay_hwnd: HWND) -> Self {
+    pub fn new(diameter: i32, _overlay_hwnd: HWND) -> Self {
+        use windows::Win32::Foundation::COLORREF;
+        use windows::Win32::Graphics::Gdi::*;
+        use windows::Win32::UI::Magnification::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
         assert!(diameter > 0, "magnifier diameter must be positive, got {diameter}");
 
         unsafe {
-            let hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+            MagInitialize().expect("MagInitialize failed");
+
+            // Host window: layered for border rendering, circular via region
+            let host_hwnd = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW
+                    | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
                 windows::core::w!("STATIC"),
-                windows::core::w!("HoldRect Magnifier"),
+                windows::core::w!("HoldRect Magnifier Host"),
                 WS_POPUP,
                 0, 0, diameter, diameter,
                 None, None, None, None,
-            ).expect("Failed to create magnifier window");
+            ).expect("Failed to create magnifier host");
 
-            // Set overlay as owner for Z-order stacking
-            SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, overlay_hwnd.0 as isize);
+            // Circular clip region on the host window
+            let region = CreateEllipticRgn(0, 0, diameter, diameter);
+            let _ = SetWindowRgn(host_hwnd, region, true);
 
-            Self { hwnd, diameter }
+            // Child magnification control (inside border)
+            let content_d = diameter - BORDER_WIDTH * 2;
+            let mag_hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                WC_MAGNIFIER,
+                windows::core::PCWSTR(std::ptr::null()),
+                WS_CHILD | WS_VISIBLE,
+                BORDER_WIDTH, BORDER_WIDTH,
+                content_d.max(1), content_d.max(1),
+                host_hwnd, None, None, None,
+            ).expect("Failed to create magnifier control");
+
+            // Paint initial border onto the host's layered surface
+            Self::paint_border(host_hwnd, diameter, COLORREF(0x00FF00), &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 }, 0.0);
+
+            Self { host_hwnd, mag_hwnd, diameter }
         }
     }
 
-    pub fn hide(&self) {
-        use windows::Win32::UI::WindowsAndMessaging::*;
-        unsafe {
-            let _ = ShowWindow(self.hwnd, SW_HIDE);
-        }
-    }
-
-    pub fn render(
-        &mut self,
-        cursor_pos: (i32, i32),
-        zoom: f64,
+    fn paint_border(
+        hwnd: HWND,
+        d: i32,
+        _fallback_color: windows::Win32::Foundation::COLORREF,
         color_mode: &crate::config::ColorMode,
         time_offset: f32,
     ) {
-        use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
+        use windows::Win32::Foundation::{COLORREF, POINT, SIZE};
         use windows::Win32::Graphics::Gdi::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
 
         unsafe {
-            assert!(zoom > 0.0, "magnifier zoom must be positive, got {zoom}");
-            let d = self.diameter;
-            let r = d / 2;
-
-            // Position window centered on cursor (may extend past screen edges)
-            let x = cursor_pos.0 - r;
-            let y = cursor_pos.1 - r;
-
-            // Capture screen region (no need to hide — UpdateLayeredWindow
-            // handles visibility atomically, no flicker)
             let screen_dc = GetDC(HWND::default());
             let mem_dc = CreateCompatibleDC(screen_dc);
-            let capture_w = ((d as f64 / zoom) as i32).max(1);
-            let capture_h = ((d as f64 / zoom) as i32).max(1);
-            let src_x = cursor_pos.0 - capture_w / 2;
-            let src_y = cursor_pos.1 - capture_h / 2;
 
-            // Create capture bitmap
-            let cap_bmp = CreateCompatibleBitmap(screen_dc, capture_w, capture_h);
-            let old_bmp = SelectObject(mem_dc, cap_bmp);
-            let _ = BitBlt(mem_dc, 0, 0, capture_w, capture_h, screen_dc, src_x, src_y, SRCCOPY);
-
-            // 4. Create DIB for the magnifier window content
-            let dib_dc = CreateCompatibleDC(screen_dc);
             let bi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
                     biWidth: d,
-                    biHeight: -d, // top-down
+                    biHeight: -d,
                     biPlanes: 1,
                     biBitCount: 32,
                     biCompression: BI_RGB.0 as u32,
@@ -106,92 +105,42 @@ impl MagnifierWindow {
                 ..std::mem::zeroed()
             };
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let dib = CreateDIBSection(dib_dc, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
+            let dib = CreateDIBSection(mem_dc, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
                 .expect("CreateDIBSection failed");
-            let old_dib = SelectObject(dib_dc, dib);
-            let old_dib = HBITMAP(old_dib.0); // cast HGDIOBJ back to HBITMAP for restore
+            let old_bmp = SelectObject(mem_dc, dib);
+            let old_bmp = windows::Win32::Graphics::Gdi::HBITMAP(old_bmp.0);
 
-            // 5. StretchBlt captured content into DIB (scaled up)
-            SetStretchBltMode(dib_dc, HALFTONE);
-            let _ = SetBrushOrgEx(dib_dc, 0, 0, None); // required after HALFTONE
-            let _ = StretchBlt(dib_dc, 0, 0, d, d, mem_dc, 0, 0, capture_w, capture_h, SRCCOPY);
-
-            // 6. Circular clip -- clear outside circle
-            let center = d as f64 / 2.0;
-            let radius_sq = center * center;
+            // Fill transparent, then paint border ring
             let pixel_slice = std::slice::from_raw_parts_mut(pixels, (d * d * 4) as usize);
+            for b in pixel_slice.iter_mut() { *b = 0; }
+
+            let center = d as f64 / 2.0;
+            let outer_sq = center * center;
+            let inner_sq = (center - BORDER_WIDTH as f64) * (center - BORDER_WIDTH as f64);
             for row in 0..d {
                 for col in 0..d {
                     let dx = col as f64 - center + 0.5;
                     let dy = row as f64 - center + 0.5;
                     let dist_sq = dx * dx + dy * dy;
-                    let off = ((row * d + col) * 4) as usize;
-                    if dist_sq > radius_sq {
-                        // Outside circle: transparent
-                        pixel_slice[off] = 0;
-                        pixel_slice[off + 1] = 0;
-                        pixel_slice[off + 2] = 0;
-                        pixel_slice[off + 3] = 0;
-                    } else {
-                        // Inside circle: opaque
+                    if dist_sq <= outer_sq && dist_sq > inner_sq {
+                        let off = ((row * d + col) * 4) as usize;
+                        let (r, g, b) = match color_mode {
+                            crate::config::ColorMode::Solid { r, g, b } => (*r, *g, *b),
+                            crate::config::ColorMode::Rainbow => {
+                                let pos = circular_perimeter_position(col, row, d / 2, d / 2);
+                                let hue = (pos + time_offset).fract() * 360.0;
+                                crate::overlay::hsv_to_rgb(hue, 1.0, 1.0)
+                            }
+                        };
+                        pixel_slice[off] = b;
+                        pixel_slice[off + 1] = g;
+                        pixel_slice[off + 2] = r;
                         pixel_slice[off + 3] = 255;
-                        if dist_sq > (center - BORDER_WIDTH as f64) * (center - BORDER_WIDTH as f64) {
-                            // Border region: rainbow color using circular perimeter position
-                            let (cr, cg, cb) = match color_mode {
-                                crate::config::ColorMode::Solid { r, g, b } => (*r, *g, *b),
-                                crate::config::ColorMode::Rainbow => {
-                                    let pos = circular_perimeter_position(col, row, d / 2, d / 2);
-                                    let hue = (pos + time_offset).fract() * 360.0;
-                                    crate::overlay::hsv_to_rgb(hue, 1.0, 1.0)
-                                }
-                            };
-                            pixel_slice[off] = cb;     // B
-                            pixel_slice[off + 1] = cg; // G
-                            pixel_slice[off + 2] = cr; // R
-                        }
-                        // else: keep the stretched content as-is (RGB from StretchBlt, alpha now 255)
                     }
                 }
             }
 
-            // 7. Draw zoom text ("2.0x") at bottom center
-            let zoom_text = format!("{:.1}x", zoom);
-            SetBkMode(dib_dc, TRANSPARENT);
-            let face_name: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
-            let font = CreateFontW(
-                16, 0, 0, 0, FW_NORMAL.0 as i32,
-                0, 0, 0, DEFAULT_CHARSET.0 as u32,
-                OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-                CLEARTYPE_QUALITY.0 as u32, DEFAULT_PITCH.0 as u32,
-                windows::core::PCWSTR(face_name.as_ptr()),
-            );
-            let old_font = SelectObject(dib_dc, font);
-            let text_y = d - 25;
-            let mut text_rect = RECT { left: 0, top: text_y, right: d, bottom: d };
-            let mut wbuf: Vec<u16> = zoom_text.encode_utf16().chain(std::iter::once(0)).collect();
-            // Shadow
-            SetTextColor(dib_dc, COLORREF(0x000000));
-            let mut shadow_rect = RECT { left: 1, top: text_y + 1, right: d, bottom: d + 1 };
-            DrawTextW(dib_dc, &mut wbuf, &mut shadow_rect, DT_CENTER | DT_SINGLELINE);
-            // White text
-            SetTextColor(dib_dc, COLORREF(0xFFFFFF));
-            DrawTextW(dib_dc, &mut wbuf, &mut text_rect, DT_CENTER | DT_SINGLELINE);
-            SelectObject(dib_dc, old_font);
-            let _ = DeleteObject(font);
-
-            // Restore alpha after GDI text rendering (GDI may corrupt alpha channel)
-            for row in 0..d {
-                for col in 0..d {
-                    let dx = col as f64 - center + 0.5;
-                    let dy = row as f64 - center + 0.5;
-                    let off = ((row * d + col) * 4) as usize;
-                    pixel_slice[off + 3] =
-                        if dx * dx + dy * dy <= radius_sq { 255 } else { 0 };
-                }
-            }
-
-            // 8. UpdateLayeredWindow — atomically sets position, size, and content
-            let ppt_dst = POINT { x, y };
+            let ppt_dst = POINT { x: 0, y: 0 };
             let size = SIZE { cx: d, cy: d };
             let ppt_src = POINT { x: 0, y: 0 };
             let blend = BLENDFUNCTION {
@@ -200,22 +149,74 @@ impl MagnifierWindow {
                 SourceConstantAlpha: 255,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
-            UpdateLayeredWindow(
-                self.hwnd, screen_dc, Some(&ppt_dst), Some(&size),
-                dib_dc, Some(&ppt_src), COLORREF(0), Some(&blend), ULW_ALPHA,
-            ).expect("UpdateLayeredWindow failed");
+            let _ = UpdateLayeredWindow(
+                hwnd, screen_dc, Some(&ppt_dst), Some(&size),
+                mem_dc, Some(&ppt_src), COLORREF(0), Some(&blend), ULW_ALPHA,
+            );
 
-            // 9. Show window after content is ready (avoids blank flash on first frame)
-            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-
-            // 9. Cleanup
-            SelectObject(dib_dc, old_dib);
-            let _ = DeleteObject(dib);
             SelectObject(mem_dc, old_bmp);
-            let _ = DeleteObject(cap_bmp);
-            let _ = DeleteDC(dib_dc);
+            let _ = DeleteObject(dib);
             let _ = DeleteDC(mem_dc);
             let _ = ReleaseDC(HWND::default(), screen_dc);
+        }
+    }
+
+    pub fn hide(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        unsafe {
+            let _ = ShowWindow(self.host_hwnd, SW_HIDE);
+        }
+    }
+
+    /// Update magnifier: position host window, set source rect + zoom transform.
+    pub fn render(
+        &mut self,
+        cursor_pos: (i32, i32),
+        zoom: f64,
+        _color_mode: &crate::config::ColorMode,
+        _time_offset: f32,
+    ) {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Gdi::InvalidateRect;
+        use windows::Win32::UI::Magnification::*;
+        use windows::Win32::UI::WindowsAndMessaging::*;
+
+        unsafe {
+            assert!(zoom > 0.0, "magnifier zoom must be positive, got {zoom}");
+            let d = self.diameter;
+            let r = d / 2;
+            let content_d = d - BORDER_WIDTH * 2;
+
+            // Source rect in desktop coordinates, centered on cursor
+            let source_w = ((content_d as f64) / zoom).round() as i32;
+            let source_h = ((content_d as f64) / zoom).round() as i32;
+            let source_rect = RECT {
+                left: cursor_pos.0 - source_w / 2,
+                top: cursor_pos.1 - source_h / 2,
+                right: cursor_pos.0 - source_w / 2 + source_w,
+                bottom: cursor_pos.1 - source_h / 2 + source_h,
+            };
+
+            // Zoom transform (MAGTRANSFORM is flat [f32; 9], row-major 3x3)
+            let mut transform = MAGTRANSFORM {
+                v: [
+                    zoom as f32, 0.0, 0.0,
+                    0.0, zoom as f32, 0.0,
+                    0.0, 0.0, 1.0,
+                ],
+            };
+            let _ = MagSetWindowTransform(self.mag_hwnd, &mut transform);
+            let _ = MagSetWindowSource(self.mag_hwnd, source_rect);
+
+            // Position host window centered on cursor
+            let _ = SetWindowPos(
+                self.host_hwnd, HWND_TOPMOST,
+                cursor_pos.0 - r, cursor_pos.1 - r, d, d,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+
+            // Trigger magnifier repaint
+            let _ = InvalidateRect(self.mag_hwnd, None, false);
         }
     }
 }
@@ -224,7 +225,8 @@ impl MagnifierWindow {
 impl Drop for MagnifierWindow {
     fn drop(&mut self) {
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.hwnd);
+            let _ = windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.host_hwnd);
+            let _ = windows::Win32::UI::Magnification::MagUninitialize();
         }
     }
 }
@@ -237,14 +239,8 @@ mod tests {
     #[should_panic(expected = "diameter")]
     #[cfg(windows)]
     fn magnifier_window_new_zero_diameter_panics() {
-        // assert!(diameter > 0) fires before CreateWindowExW, so null HWND is safe here
         let _ = MagnifierWindow::new(0, HWND(std::ptr::null_mut()));
     }
-
-    // Note: render's `assert!(zoom > 0.0)` cannot be unit-tested because
-    // MagnifierWindow fields are private and new() calls CreateWindowExW
-    // which requires a real Windows display context. The guard is exercised
-    // by integration/manual testing instead.
 
     #[test]
     fn circular_perimeter_right_is_zero() {
@@ -268,8 +264,8 @@ mod tests {
 
     #[test]
     fn circular_perimeter_wraps_around() {
-        let pos1 = circular_perimeter_position(50, 50 + 10, 50, 50); // bottom
-        let pos2 = circular_perimeter_position(50, 50 - 10, 50, 50); // top
+        let pos1 = circular_perimeter_position(50, 50 + 10, 50, 50);
+        let pos2 = circular_perimeter_position(50, 50 - 10, 50, 50);
         assert!(
             (pos1 - pos2).abs() > 0.4,
             "opposite sides should be ~0.5 apart"
@@ -278,7 +274,6 @@ mod tests {
 
     #[test]
     fn circular_perimeter_same_point_is_defined() {
-        // When point == center, atan2(0,0) is defined (0.0 in Rust)
         let pos = circular_perimeter_position(50, 50, 50, 50);
         assert!((0.0..=1.0).contains(&pos));
     }

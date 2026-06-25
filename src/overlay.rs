@@ -351,7 +351,7 @@ impl App {
                 });
                 unsafe {
                     let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor_pos);
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos(&mut cursor_pos);
                     mag.render((cursor_pos.x, cursor_pos.y), self.state.zoom_level, &self.color_mode, time_offset);
                 }
             } else if let Some(mag) = &self.magnifier {
