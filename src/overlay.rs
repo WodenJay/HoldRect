@@ -1543,70 +1543,70 @@ modifier = "Ctrl""#;
 
         #[test]
         fn decide_mouse_zero_coordinates() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (0, 0), true, false, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (0, 0), true, false, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 0, y: 0 }));
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_negative_coordinates() {
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (-100, -200), false, true, false);
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (-100, -200), false, true, false, false, 0);
             assert_eq!(event, Some(InputEvent::MouseMove { x: -100, y: -200 }));
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_unknown_msg_no_drag_suppress_modifier_held() {
-            let (event, suppress) = decide_mouse(0x020B, (100, 200), true, false, true); // WM_XBUTTONDOWN
+            let (event, suppress) = decide_mouse(0x020B, (100, 200), true, false, true, false, 0); // WM_XBUTTONDOWN
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_extreme_coordinates() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (i32::MAX, i32::MIN), true, false, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (i32::MAX, i32::MIN), true, false, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN }));
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_unknown_msg_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false);
+            let (event, suppress) = decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_rbuttonup_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false);
+            let (event, suppress) = decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_lbuttondown_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (200, 300), true, true, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (200, 300), true, true, true, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_suppress_false_modifier_held_true_no_drag() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), false, false, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), false, false, true, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_drag_with_modifier_held_and_suppress() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (400, 500), true, true, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (400, 500), true, true, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 400, y: 500 }));
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_move_during_drag_with_all_flags_true() {
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 60), true, true, true);
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 60), true, true, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseMove { x: 50, y: 60 }));
             assert!(!suppress);
         }
@@ -1621,16 +1621,16 @@ modifier = "Ctrl""#;
             assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
             should_suppress = true;
 
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (50, 75), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (50, 75), should_suppress, drag_in_progress, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 50, y: 75 }));
             assert!(suppress);
             drag_in_progress = true;
 
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (150, 175), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (150, 175), should_suppress, drag_in_progress, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseMove { x: 150, y: 175 }));
             assert!(!suppress);
 
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (200, 250), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (200, 250), should_suppress, drag_in_progress, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 200, y: 250 }));
             assert!(suppress);
             drag_in_progress = false;
@@ -1646,7 +1646,7 @@ modifier = "Ctrl""#;
         fn multiple_mouse_moves_during_drag_all_track() {
             let coords = [(10, 20), (30, 40), (50, 60), (70, 80), (90, 100)];
             for &(x, y) in &coords {
-                let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (x, y), true, true, true);
+                let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (x, y), true, true, true, false, 0);
                 assert_eq!(event, Some(InputEvent::MouseMove { x, y }));
                 assert!(!suppress);
             }
@@ -1659,26 +1659,26 @@ modifier = "Ctrl""#;
 
             // Cycle 1
             should_suppress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (10, 10), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (10, 10), should_suppress, drag_in_progress, true, false, 0);
             assert!(suppress);
             drag_in_progress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (20, 20), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (20, 20), should_suppress, drag_in_progress, true, false, 0);
             assert!(suppress);
             drag_in_progress = false;
             should_suppress = false;
 
             // Idle
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 50), false, false, false);
+            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 50), false, false, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
 
             // Cycle 2
             should_suppress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (30, 30), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (30, 30), should_suppress, drag_in_progress, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 30, y: 30 }));
             assert!(suppress);
             drag_in_progress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (40, 40), should_suppress, drag_in_progress, true);
+            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (40, 40), should_suppress, drag_in_progress, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 40, y: 40 }));
             assert!(suppress);
             drag_in_progress = false;
