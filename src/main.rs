@@ -1,18 +1,18 @@
 #![windows_subsystem = "windows"]
 
-mod config;
 #[cfg(windows)]
 mod autostart;
-mod state;
-mod overlay;
-mod tray;
-mod popup;
-mod mem_report;
+mod config;
 #[cfg(windows)]
 mod hook;
 mod magnifier;
+mod mem_report;
+mod overlay;
+mod popup;
 #[cfg(windows)]
 mod single_instance;
+mod state;
+mod tray;
 
 use std::sync::mpsc;
 use std::thread;
@@ -75,7 +75,14 @@ fn main() {
         std::process::exit(0);
     });
 
-    run_overlay(event_loop, input_rx, config_rx, config.border_width, config.color_mode, config.modifier_name.clone());
+    run_overlay(
+        event_loop,
+        input_rx,
+        config_rx,
+        config.border_width,
+        config.color_mode,
+        config.modifier_name.clone(),
+    );
     std::process::exit(0);
 }
 

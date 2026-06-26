@@ -19,9 +19,15 @@ pub fn start_tray(exit_tx: Sender<AppExit>) -> TrayIcon {
     let quit_item = MenuItem::new("退出 HoldRect", true, None);
 
     let tray_menu = Menu::new();
-    tray_menu.append(&autostart_item).expect("Failed to add autostart item");
-    tray_menu.append(&separator).expect("Failed to add separator");
-    tray_menu.append(&quit_item).expect("Failed to add quit item");
+    tray_menu
+        .append(&autostart_item)
+        .expect("Failed to add autostart item");
+    tray_menu
+        .append(&separator)
+        .expect("Failed to add separator");
+    tray_menu
+        .append(&quit_item)
+        .expect("Failed to add quit item");
 
     let icon = create_icon();
 
@@ -118,7 +124,10 @@ mod tests {
     fn app_exit_signal_type_exists() {
         let (tx, rx) = mpsc::channel();
         tx.send(AppExit).unwrap();
-        assert!(rx.try_recv().is_ok(), "AppExit should be sendable through mpsc");
+        assert!(
+            rx.try_recv().is_ok(),
+            "AppExit should be sendable through mpsc"
+        );
     }
 
     #[test]
@@ -148,9 +157,13 @@ mod tests {
                 } else {
                     dx.max(dy).max(0.0)
                 };
-                if dist > RADIUS { bg += 1; }
-                else if dist > RADIUS - BORDER_W { border += 1; }
-                else { white += 1; }
+                if dist > RADIUS {
+                    bg += 1;
+                } else if dist > RADIUS - BORDER_W {
+                    border += 1;
+                } else {
+                    white += 1;
+                }
             }
         }
         assert!(border > 0, "Border should have pixels");
@@ -181,10 +194,18 @@ mod tests {
                     dx.max(dy).max(0.0)
                 };
                 if dist <= RADIUS && dist > RADIUS - BORDER_W {
-                    if y as f64 <= cy && x as f64 <= cx { has_red = true; }
-                    if y as f64 <= cy && x as f64 > cx { has_orange = true; }
-                    if y as f64 > cy && x as f64 > cx { has_blue = true; }
-                    if y as f64 > cy && x as f64 <= cx { has_purple = true; }
+                    if y as f64 <= cy && x as f64 <= cx {
+                        has_red = true;
+                    }
+                    if y as f64 <= cy && x as f64 > cx {
+                        has_orange = true;
+                    }
+                    if y as f64 > cy && x as f64 > cx {
+                        has_blue = true;
+                    }
+                    if y as f64 > cy && x as f64 <= cx {
+                        has_purple = true;
+                    }
                 }
             }
         }
@@ -280,10 +301,15 @@ mod tests {
             if dist > RADIUS {
                 BG
             } else if dist > RADIUS - BORDER_W {
-                if y as f64 <= cy && x as f64 <= cx { RED }
-                else if y as f64 <= cy { ORANGE }
-                else if x as f64 <= cx { PURPLE }
-                else { BLUE }
+                if y as f64 <= cy && x as f64 <= cx {
+                    RED
+                } else if y as f64 <= cy {
+                    ORANGE
+                } else if x as f64 <= cx {
+                    PURPLE
+                } else {
+                    BLUE
+                }
             } else {
                 WHITE
             }
@@ -297,7 +323,12 @@ mod tests {
                 let mirror_x = SIZE - 1 - x;
                 let dx_l = (x as f64 - cx).abs();
                 let dx_r = (mirror_x as f64 - cx).abs();
-                assert!((dx_l - dx_r).abs() < 1e-9, "dx symmetry failed at x={}, mirror={}", x, mirror_x);
+                assert!(
+                    (dx_l - dx_r).abs() < 1e-9,
+                    "dx symmetry failed at x={}, mirror={}",
+                    x,
+                    mirror_x
+                );
             }
         }
     }
@@ -322,13 +353,21 @@ mod tests {
                 assignments += 1;
             }
         }
-        assert_eq!(assignments, (SIZE * SIZE) as u32, "Every pixel position must be visited");
+        assert_eq!(
+            assignments,
+            (SIZE * SIZE) as u32,
+            "Every pixel position must be visited"
+        );
     }
 
     #[test]
     fn app_exit_unit_struct_size() {
         use std::mem;
-        assert_eq!(mem::size_of::<AppExit>(), 0, "AppExit should be a zero-sized type");
+        assert_eq!(
+            mem::size_of::<AppExit>(),
+            0,
+            "AppExit should be a zero-sized type"
+        );
     }
 
     #[test]

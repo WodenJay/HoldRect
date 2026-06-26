@@ -55,7 +55,11 @@ mod tests {
                 max_pos = pos;
             }
         }
-        assert!(max_pos > 0.0, "underdamped spring should overshoot past target, got max={}", max_pos);
+        assert!(
+            max_pos > 0.0,
+            "underdamped spring should overshoot past target, got max={}",
+            max_pos
+        );
     }
 
     #[test]
@@ -69,13 +73,21 @@ mod tests {
                 max_pos = pos;
             }
         }
-        assert!(max_pos <= 0.5, "critically damped should not overshoot, got max={}", max_pos);
+        assert!(
+            max_pos <= 0.5,
+            "critically damped should not overshoot, got max={}",
+            max_pos
+        );
     }
 
     #[test]
     fn converges_within_500ms() {
         let pos = spring_position(0.5, -60.0, 0.0, 18.0, 0.82);
-        assert!((pos - 0.0).abs() < 2.0, "should be near target at 500ms, got {}", pos);
+        assert!(
+            (pos - 0.0).abs() < 2.0,
+            "should be near target at 500ms, got {}",
+            pos
+        );
     }
 
     #[test]
@@ -92,7 +104,10 @@ mod tests {
             }
         }
         // overshoot should be positive but bounded (1-5% of displacement)
-        assert!(max_pos > 0.5 && max_pos < 5.0,
-            "overshoot should be ~0.5-5px, got {}", max_pos);
+        assert!(
+            max_pos > 0.5 && max_pos < 5.0,
+            "overshoot should be ~0.5-5px, got {}",
+            max_pos
+        );
     }
 }

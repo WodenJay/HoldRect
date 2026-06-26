@@ -36,21 +36,34 @@ impl MagnifierWindow {
         use windows::Win32::Graphics::Gdi::*;
         use windows::Win32::UI::Magnification::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
-        assert!(diameter > 0, "magnifier diameter must be positive, got {diameter}");
+        assert!(
+            diameter > 0,
+            "magnifier diameter must be positive, got {diameter}"
+        );
 
         unsafe {
             MagInitialize().expect("MagInitialize failed");
 
             // Host window: layered for border rendering, circular via region
             let host_hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW
-                    | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+                WS_EX_TOPMOST
+                    | WS_EX_LAYERED
+                    | WS_EX_TOOLWINDOW
+                    | WS_EX_TRANSPARENT
+                    | WS_EX_NOACTIVATE,
                 windows::core::w!("STATIC"),
                 windows::core::w!("HoldRect Magnifier Host"),
                 WS_POPUP,
-                0, 0, diameter, diameter,
-                None, None, None, None,
-            ).expect("Failed to create magnifier host");
+                0,
+                0,
+                diameter,
+                diameter,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("Failed to create magnifier host");
 
             // Circular clip region on the host window
             let region = CreateEllipticRgn(0, 0, diameter, diameter);
@@ -63,28 +76,38 @@ impl MagnifierWindow {
                 WC_MAGNIFIER,
                 windows::core::PCWSTR(std::ptr::null()),
                 WS_CHILD | WS_VISIBLE,
-                BORDER_WIDTH, BORDER_WIDTH,
-                content_d.max(1), content_d.max(1),
-                host_hwnd, None, None, None,
-            ).expect("Failed to create magnifier control");
+                BORDER_WIDTH,
+                BORDER_WIDTH,
+                content_d.max(1),
+                content_d.max(1),
+                host_hwnd,
+                None,
+                None,
+                None,
+            )
+            .expect("Failed to create magnifier control");
 
             // Clip magnifier control to inner circle (avoids covering border ring)
             let mag_region = CreateEllipticRgn(0, 0, content_d, content_d);
             SetWindowRgn(mag_hwnd, mag_region, true);
 
             // Paint initial border onto the host's layered surface
-            Self::paint_border(host_hwnd, diameter, &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 }, 0.0);
+            Self::paint_border(
+                host_hwnd,
+                diameter,
+                &crate::config::ColorMode::Solid { r: 0, g: 255, b: 0 },
+                0.0,
+            );
 
-            Self { host_hwnd, mag_hwnd, diameter }
+            Self {
+                host_hwnd,
+                mag_hwnd,
+                diameter,
+            }
         }
     }
 
-    fn paint_border(
-        hwnd: HWND,
-        d: i32,
-        color_mode: &crate::config::ColorMode,
-        time_offset: f32,
-    ) {
+    fn paint_border(hwnd: HWND, d: i32, color_mode: &crate::config::ColorMode, time_offset: f32) {
         use windows::Win32::Foundation::{COLORREF, POINT, SIZE};
         use windows::Win32::Graphics::Gdi::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
@@ -100,21 +123,30 @@ impl MagnifierWindow {
                     biHeight: -d,
                     biPlanes: 1,
                     biBitCount: 32,
-                    biCompression: BI_RGB.0 as u32,
+                    biCompression: BI_RGB.0,
                     biSizeImage: (d * d * 4) as u32,
                     ..std::mem::zeroed()
                 },
                 ..std::mem::zeroed()
             };
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let dib = CreateDIBSection(mem_dc, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
-                .expect("CreateDIBSection failed");
+            let dib = CreateDIBSection(
+                mem_dc,
+                &bi,
+                DIB_RGB_COLORS,
+                &mut pixels as *mut *mut u8 as _,
+                None,
+                0,
+            )
+            .expect("CreateDIBSection failed");
             let old_bmp = SelectObject(mem_dc, dib);
             let old_bmp = windows::Win32::Graphics::Gdi::HBITMAP(old_bmp.0);
 
             // Fill transparent, then paint border ring
             let pixel_slice = std::slice::from_raw_parts_mut(pixels, (d * d * 4) as usize);
-            for b in pixel_slice.iter_mut() { *b = 0; }
+            for b in pixel_slice.iter_mut() {
+                *b = 0;
+            }
 
             let center = d as f64 / 2.0;
             let outer_sq = center * center;
@@ -151,8 +183,15 @@ impl MagnifierWindow {
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
             let _ = UpdateLayeredWindow(
-                hwnd, screen_dc, None, Some(&size),
-                mem_dc, Some(&ppt_src), COLORREF(0), Some(&blend), ULW_ALPHA,
+                hwnd,
+                screen_dc,
+                None,
+                Some(&size),
+                mem_dc,
+                Some(&ppt_src),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
             );
 
             SelectObject(mem_dc, old_bmp);
@@ -200,19 +239,19 @@ impl MagnifierWindow {
 
             // Zoom transform (MAGTRANSFORM is flat [f32; 9], row-major 3x3)
             let mut transform = MAGTRANSFORM {
-                v: [
-                    zoom as f32, 0.0, 0.0,
-                    0.0, zoom as f32, 0.0,
-                    0.0, 0.0, 1.0,
-                ],
+                v: [zoom as f32, 0.0, 0.0, 0.0, zoom as f32, 0.0, 0.0, 0.0, 1.0],
             };
             let _ = MagSetWindowTransform(self.mag_hwnd, &mut transform);
             let _ = MagSetWindowSource(self.mag_hwnd, source_rect);
 
             // Position host window centered on cursor
             let _ = SetWindowPos(
-                self.host_hwnd, HWND_TOPMOST,
-                cursor_pos.0 - r, cursor_pos.1 - r, d, d,
+                self.host_hwnd,
+                HWND_TOPMOST,
+                cursor_pos.0 - r,
+                cursor_pos.1 - r,
+                d,
+                d,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
 

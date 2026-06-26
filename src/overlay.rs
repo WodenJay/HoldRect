@@ -16,14 +16,14 @@ use windows::Win32::Foundation::HWND;
 
 use crate::config::AppConfig;
 use crate::config::ColorMode;
-use crate::popup::PopupManager;
 #[cfg(windows)]
 use crate::popup::gdi_renderer::GdiRenderer;
+use crate::popup::PopupManager;
+use crate::state::normalize_rect;
+use crate::state::process_event;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
-use crate::state::normalize_rect;
-use crate::state::process_event;
 
 const FLOW_SPEED: f32 = 0.1;
 
@@ -54,7 +54,7 @@ impl DibCache {
                 biHeight: -height,
                 biPlanes: 1,
                 biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
+                biCompression: BI_RGB.0,
                 ..Default::default()
             },
             ..Default::default()
@@ -77,7 +77,9 @@ impl DibCache {
         };
 
         if pixels.is_null() {
-            unsafe { let _ = DeleteObject(bitmap); }
+            unsafe {
+                let _ = DeleteObject(bitmap);
+            }
             return None;
         }
 
@@ -88,7 +90,13 @@ impl DibCache {
             let _ = ReleaseDC(windows::Win32::Foundation::HWND::default(), screen_dc);
         }
 
-        Some(Self { bitmap, memory_dc, pixels, width, height })
+        Some(Self {
+            bitmap,
+            memory_dc,
+            pixels,
+            width,
+            height,
+        })
     }
 
     fn ensure_size(&mut self, width: i32, height: i32) {
@@ -105,7 +113,10 @@ impl DibCache {
     fn destroy(&mut self) {
         use windows::Win32::Graphics::Gdi::*;
         unsafe {
-            SelectObject(self.memory_dc, windows::Win32::Graphics::Gdi::HBITMAP::default());
+            SelectObject(
+                self.memory_dc,
+                windows::Win32::Graphics::Gdi::HBITMAP::default(),
+            );
             let _ = DeleteObject(self.bitmap);
             let _ = DeleteDC(self.memory_dc);
         }
@@ -159,7 +170,13 @@ impl Drop for App {
 }
 
 impl App {
-    pub fn new(input_rx: Receiver<InputEvent>, config_rx: Receiver<AppConfig>, border_width: i32, color_mode: ColorMode, modifier_name: String) -> Self {
+    pub fn new(
+        input_rx: Receiver<InputEvent>,
+        config_rx: Receiver<AppConfig>,
+        border_width: i32,
+        color_mode: ColorMode,
+        modifier_name: String,
+    ) -> Self {
         Self {
             window: None,
             state: AppState::default(),
@@ -190,10 +207,18 @@ impl ApplicationHandler for App {
         }
         // Cover entire virtual desktop (all monitors)
         let monitors: Vec<_> = event_loop.available_monitors().collect();
-        let left   = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
-        let top    = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
-        let right  = monitors.iter().map(|m| m.position().x + m.size().width as i32).max().unwrap_or(1920);
-        let bottom = monitors.iter().map(|m| m.position().y + m.size().height as i32).max().unwrap_or(1080);
+        let left = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
+        let top = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
+        let right = monitors
+            .iter()
+            .map(|m| m.position().x + m.size().width as i32)
+            .max()
+            .unwrap_or(1920);
+        let bottom = monitors
+            .iter()
+            .map(|m| m.position().y + m.size().height as i32)
+            .max()
+            .unwrap_or(1080);
 
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
@@ -206,7 +231,9 @@ impl ApplicationHandler for App {
                 (right - left) as u32,
                 (bottom - top) as u32,
             ));
-        let window = event_loop.create_window(attrs).expect("Failed to create window");
+        let window = event_loop
+            .create_window(attrs)
+            .expect("Failed to create window");
 
         // Set WS_EX_TRANSPARENT for mouse passthrough + WS_EX_LAYERED
         #[cfg(windows)]
@@ -223,7 +250,12 @@ impl ApplicationHandler for App {
             let window_name: Vec<u16> = "HoldRectPopup\0".encode_utf16().collect();
 
             // Register window class (re-registration is a no-op)
-            unsafe extern "system" fn popup_wnd_proc(hwnd: HWND, msg: u32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
+            unsafe extern "system" fn popup_wnd_proc(
+                hwnd: HWND,
+                msg: u32,
+                wparam: windows::Win32::Foundation::WPARAM,
+                lparam: windows::Win32::Foundation::LPARAM,
+            ) -> windows::Win32::Foundation::LRESULT {
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
             let wc = WNDCLASSEXW {
@@ -233,18 +265,31 @@ impl ApplicationHandler for App {
                 lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
                 ..Default::default()
             };
-            unsafe { RegisterClassExW(&wc); }
+            unsafe {
+                RegisterClassExW(&wc);
+            }
 
             let popup_hwnd = unsafe {
                 CreateWindowExW(
-                    WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    WS_EX_LAYERED
+                        | WS_EX_TOPMOST
+                        | WS_EX_TRANSPARENT
+                        | WS_EX_TOOLWINDOW
+                        | WS_EX_NOACTIVATE,
                     windows::core::PCWSTR(class_name.as_ptr()),
                     windows::core::PCWSTR(window_name.as_ptr()),
                     WS_POPUP,
-                    0, 0, 400, 300, // will be resized on render
-                    None, None, HINSTANCE::default(), None,
+                    0,
+                    0,
+                    400,
+                    300, // will be resized on render
+                    None,
+                    None,
+                    HINSTANCE::default(),
+                    None,
                 )
-            }.expect("Failed to create popup window");
+            }
+            .expect("Failed to create popup window");
 
             self.popup_hwnd = Some(popup_hwnd);
             self.popup_renderer = Some(GdiRenderer::new(popup_hwnd));
@@ -296,13 +341,18 @@ impl ApplicationHandler for App {
             let was_hidden = !self.popup_manager.needs_frame();
             self.state = new_state;
             // Wire magnifier_active to the atomic read by the mouse hook
-            crate::hook::MAGNIFIER_ACTIVE.store(self.state.magnifier_active, std::sync::atomic::Ordering::Relaxed);
+            crate::hook::MAGNIFIER_ACTIVE.store(
+                self.state.magnifier_active,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             // Route to popup manager
             self.popup_manager.on_event(&event, &self.state);
             // Cache monitor rect when popup transitions from Hidden -> visible
             if was_hidden && self.popup_manager.needs_frame() {
                 #[cfg(windows)]
-                { self.popup_monitor_rect = get_cursor_monitor_work_area(); }
+                {
+                    self.popup_monitor_rect = get_cursor_monitor_work_area();
+                }
             }
         }
 
@@ -334,7 +384,9 @@ impl ApplicationHandler for App {
 
 impl App {
     fn render(&mut self) {
-        let Some(window) = &self.window else { return; };
+        let Some(window) = &self.window else {
+            return;
+        };
 
         // Magnifier rendering (before overlay DIB path to avoid allocating
         // the full overlay DIB when only the magnifier is active)
@@ -347,12 +399,22 @@ impl App {
             if self.state.magnifier_active {
                 let mag = self.magnifier.get_or_insert_with(|| {
                     let overlay_hwnd = get_hwnd(window);
-                    crate::magnifier::MagnifierWindow::new(crate::magnifier::MAGNIFIER_DIAMETER, overlay_hwnd)
+                    crate::magnifier::MagnifierWindow::new(
+                        crate::magnifier::MAGNIFIER_DIAMETER,
+                        overlay_hwnd,
+                    )
                 });
                 unsafe {
                     let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos(&mut cursor_pos);
-                    mag.render((cursor_pos.x, cursor_pos.y), self.state.zoom_level, &self.color_mode, time_offset);
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos(
+                        &mut cursor_pos,
+                    );
+                    mag.render(
+                        (cursor_pos.x, cursor_pos.y),
+                        self.state.zoom_level,
+                        &self.color_mode,
+                        time_offset,
+                    );
                 }
             } else if let Some(mag) = &self.magnifier {
                 mag.hide();
@@ -401,12 +463,16 @@ impl App {
         {
             let hwnd = get_hwnd(window);
             let mut wr = windows::Win32::Foundation::RECT::default();
-            if unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr) }.is_err() {
+            if unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr) }
+                .is_err()
+            {
                 return;
             }
             let width = wr.right - wr.left;
             let height = wr.bottom - wr.top;
-            if width <= 0 || height <= 0 { return; }
+            if width <= 0 || height <= 0 {
+                return;
+            }
 
             ensure_dib_size(&mut self.dib_cache, width, height);
             let cache = match &mut self.dib_cache {
@@ -421,7 +487,10 @@ impl App {
             let time_offset = (elapsed.as_secs_f64() * FLOW_SPEED as f64).fract() as f32;
 
             // Build spotlight rects list (screen coords)
-            let mut spotlight_rects: Vec<(i32, i32, i32, i32)> = self.state.pinned_rects.iter()
+            let mut spotlight_rects: Vec<(i32, i32, i32, i32)> = self
+                .state
+                .pinned_rects
+                .iter()
                 .filter(|r| r.spotlight)
                 .map(|r| (r.x0, r.y0, r.x1, r.y1))
                 .collect();
@@ -439,14 +508,34 @@ impl App {
 
             // Draw all pinned rects
             for rect in &self.state.pinned_rects {
-                draw_rect_in_dib(cache, width, height, wr.left, wr.top,
-                                 (rect.x0, rect.y0), (rect.x1, rect.y1), self.border_width, &self.color_mode, time_offset);
+                draw_rect_in_dib(
+                    cache,
+                    width,
+                    height,
+                    wr.left,
+                    wr.top,
+                    (rect.x0, rect.y0),
+                    (rect.x1, rect.y1),
+                    self.border_width,
+                    &self.color_mode,
+                    time_offset,
+                );
             }
 
             // Draw active rect on top
             if let DrawingState::Drawing { start, current } = &self.state.drawing {
-                draw_rect_in_dib(cache, width, height, wr.left, wr.top,
-                                 *start, *current, self.border_width, &self.color_mode, time_offset);
+                draw_rect_in_dib(
+                    cache,
+                    width,
+                    height,
+                    wr.left,
+                    wr.top,
+                    *start,
+                    *current,
+                    self.border_width,
+                    &self.color_mode,
+                    time_offset,
+                );
             }
 
             if !self.overlay_shown {
@@ -481,10 +570,10 @@ fn set_click_through(window: &Window) {
             hwnd,
             GWL_EXSTYLE,
             ex_style
-            | WS_EX_TRANSPARENT.0 as isize
-            | WS_EX_LAYERED.0 as isize
-            | WS_EX_NOACTIVATE.0 as isize
-            | WS_EX_TOOLWINDOW.0 as isize,
+                | WS_EX_TRANSPARENT.0 as isize
+                | WS_EX_LAYERED.0 as isize
+                | WS_EX_NOACTIVATE.0 as isize
+                | WS_EX_TOOLWINDOW.0 as isize,
         );
     }
 }
@@ -506,7 +595,12 @@ fn show_window_topmost(window: &Window) {
     let hwnd = get_hwnd(window);
     unsafe {
         let _ = SetWindowPos(
-            hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
     }
@@ -557,7 +651,9 @@ fn perimeter_position(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32
     let w = (x1 - x0) as f32;
     let h = (y1 - y0) as f32;
     let perimeter = 2.0 * (w + h);
-    if perimeter == 0.0 { return 0.0; }
+    if perimeter == 0.0 {
+        return 0.0;
+    }
     let dx = (x - x0) as f32;
     let dy = (y - y0) as f32;
     let dist = if dy == 0.0 && dx >= 0.0 {
@@ -572,7 +668,17 @@ fn perimeter_position(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32
     (dist / perimeter).clamp(0.0, 1.0)
 }
 
-pub(crate) fn color_at(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, color_mode: &ColorMode, time_offset: f32) -> (u8, u8, u8) {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn color_at(
+    x: i32,
+    y: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    color_mode: &ColorMode,
+    time_offset: f32,
+) -> (u8, u8, u8) {
     match color_mode {
         ColorMode::Solid { r, g, b } => (*r, *g, *b),
         ColorMode::Rainbow => {
@@ -659,16 +765,15 @@ fn dim_outside_spotlights_in_dib(
     win_y: i32,
 ) {
     unsafe {
-        let pixel_slice = std::slice::from_raw_parts_mut(
-            cache.pixels,
-            width as usize * height as usize * 4,
-        );
+        let pixel_slice =
+            std::slice::from_raw_parts_mut(cache.pixels, width as usize * height as usize * 4);
         dim_outside_spotlights(pixel_slice, width, height, rects, win_x, win_y);
     }
 }
 
 /// Draw one rectangle's border into the DIB buffer. Does NOT call UpdateLayeredWindow.
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 fn draw_rect_in_dib(
     cache: &mut DibCache,
     width: i32,
@@ -682,13 +787,19 @@ fn draw_rect_in_dib(
     time_offset: f32,
 ) {
     unsafe {
-        let pixel_slice = std::slice::from_raw_parts_mut(
-            cache.pixels,
-            width as usize * height as usize * 4,
-        );
+        let pixel_slice =
+            std::slice::from_raw_parts_mut(cache.pixels, width as usize * height as usize * 4);
         fill_border_pixels(
-            pixel_slice, width, height, win_x, win_y,
-            start, current, border_width, color_mode, time_offset,
+            pixel_slice,
+            width,
+            height,
+            win_x,
+            win_y,
+            start,
+            current,
+            border_width,
+            color_mode,
+            time_offset,
         );
     }
 }
@@ -704,7 +815,10 @@ fn commit_dib(window: &Window, cache: &DibCache, width: i32, height: i32, win_x:
     unsafe {
         let destination = POINT { x: win_x, y: win_y };
         let source = POINT { x: 0, y: 0 };
-        let size = SIZE { cx: width, cy: height };
+        let size = SIZE {
+            cx: width,
+            cy: height,
+        };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
@@ -713,8 +827,15 @@ fn commit_dib(window: &Window, cache: &DibCache, width: i32, height: i32, win_x:
         };
         let screen_dc = GetDC(HWND::default());
         let result = UpdateLayeredWindow(
-            hwnd, screen_dc, Some(&destination), Some(&size),
-            cache.memory_dc, Some(&source), COLORREF(0), Some(&blend), ULW_ALPHA,
+            hwnd,
+            screen_dc,
+            Some(&destination),
+            Some(&size),
+            cache.memory_dc,
+            Some(&source),
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
         );
         if let Err(error) = result {
             eprintln!("UpdateLayeredWindow failed: {error:?}");
@@ -731,7 +852,14 @@ pub fn create_event_loop() -> (EventLoop<()>, EventLoopProxy<()>) {
 }
 
 /// Run the overlay event loop on the main thread. Blocks until exit.
-pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, config_rx: Receiver<AppConfig>, border_width: i32, color_mode: ColorMode, modifier_name: String) {
+pub fn run_overlay(
+    event_loop: EventLoop<()>,
+    input_rx: Receiver<InputEvent>,
+    config_rx: Receiver<AppConfig>,
+    border_width: i32,
+    color_mode: ColorMode,
+    modifier_name: String,
+) {
     let mut app = App::new(input_rx, config_rx, border_width, color_mode, modifier_name);
     event_loop.run_app(&mut app).expect("Event loop error");
 }
@@ -739,8 +867,10 @@ pub fn run_overlay(event_loop: EventLoop<()>, input_rx: Receiver<InputEvent>, co
 /// Get the work area of the monitor containing the cursor.
 #[cfg(windows)]
 fn get_cursor_monitor_work_area() -> (i32, i32, i32, i32) {
-    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     unsafe {
         let mut pt = POINT::default();
@@ -763,6 +893,7 @@ fn get_cursor_monitor_work_area() -> (i32, i32, i32, i32) {
 /// `border_width` is the thickness of the border in pixels.
 /// Returns (pixels_written, set_pixel_calls) where set_pixel_calls counts every
 /// invocation including overwrites of already-written pixels.
+#[allow(clippy::too_many_arguments)]
 fn fill_border_pixels(
     buffer: &mut [u8],
     width: i32,
@@ -995,8 +1126,16 @@ mod tests {
 
         // Frame 1: draw at (10,10)-(50,50)
         let (unique1, _) = fill_border_pixels(
-            &mut buffer, width, height, 0, 0,
-            (10, 10), (50, 50), 4, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            0,
+            0,
+            (10, 10),
+            (50, 50),
+            4,
+            &color_mode,
+            0.0,
         );
         assert!(unique1 > 0, "first frame should draw pixels");
 
@@ -1005,18 +1144,37 @@ mod tests {
 
         // Frame 2: draw at (20,20)-(80,80) -- different rect, same buffer
         let (unique2, _) = fill_border_pixels(
-            &mut buffer, width, height, 0, 0,
-            (20, 20), (80, 80), 4, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            0,
+            0,
+            (20, 20),
+            (80, 80),
+            4,
+            &color_mode,
+            0.0,
         );
-        assert!(unique2 > 0, "second frame should draw pixels on reused buffer");
+        assert!(
+            unique2 > 0,
+            "second frame should draw pixels on reused buffer"
+        );
 
         // Verify the second frame's pixels are correct (not corrupted by first frame)
         // Check a pixel that should be in the border of frame 2 but NOT frame 1
         let check_x = 76usize; // right edge of frame 2 border at offset 0
         let check_y = 20usize; // top edge of frame 2
         let offset = check_y * width as usize * 4 + check_x * 4;
-        assert_eq!(buffer[offset + 3], 255, "frame 2 border pixel should have alpha=255");
-        assert_eq!(buffer[offset + 2], 255, "frame 2 border pixel should have r=255");
+        assert_eq!(
+            buffer[offset + 3],
+            255,
+            "frame 2 border pixel should have alpha=255"
+        );
+        assert_eq!(
+            buffer[offset + 2],
+            255,
+            "frame 2 border pixel should have r=255"
+        );
     }
 
     #[test]
@@ -1037,8 +1195,16 @@ mod tests {
         let mut buffer = vec![0u8; (width * height * 4) as usize];
 
         let (unique_written, total_calls) = fill_border_pixels(
-            &mut buffer, width, height, 0, 0,
-            (x0, y0), (x1, y1), border_width, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            0,
+            0,
+            (x0, y0),
+            (x1, y1),
+            border_width,
+            &color_mode,
+            0.0,
         );
 
         let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
@@ -1070,8 +1236,16 @@ mod tests {
         let mut buffer = vec![0u8; (width * height * 4) as usize];
 
         let (unique_written, total_calls) = fill_border_pixels(
-            &mut buffer, width, height, 0, 0,
-            (x0, y0), (x1, y1), border_width, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            0,
+            0,
+            (x0, y0),
+            (x1, y1),
+            border_width,
+            &color_mode,
+            0.0,
         );
 
         let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
@@ -1094,13 +1268,24 @@ mod tests {
         let mut buffer = vec![0u8; (width * height * 4) as usize];
 
         let (unique, total) = fill_border_pixels(
-            &mut buffer, width, height, 0, 0,
-            (10, 10), (10, 10), 4, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            0,
+            0,
+            (10, 10),
+            (10, 10),
+            4,
+            &color_mode,
+            0.0,
         );
 
         assert_eq!(unique, 0, "zero-area rect should write no pixels");
         assert_eq!(total, 0, "zero-area rect should make no set_pixel calls");
-        assert!(buffer.iter().all(|&b| b == 0), "buffer should remain all zeros");
+        assert!(
+            buffer.iter().all(|&b| b == 0),
+            "buffer should remain all zeros"
+        );
     }
 
     #[test]
@@ -1113,8 +1298,16 @@ mod tests {
 
         // Window at (500,500), rect at (510,510)-(520,520)
         let (unique, _) = fill_border_pixels(
-            &mut buffer, width, height, 500, 500,
-            (510, 510), (520, 520), 2, &color_mode, 0.0,
+            &mut buffer,
+            width,
+            height,
+            500,
+            500,
+            (510, 510),
+            (520, 520),
+            2,
+            &color_mode,
+            0.0,
         );
 
         assert!(unique > 0, "should draw pixels within window bounds");
@@ -1122,7 +1315,11 @@ mod tests {
         // The rect (510,510)-(520,520) maps to buffer coords (10,10)-(20,20)
         // Check pixel at (10,10) -- top-left corner of border
         let offset = 10 * width as usize * 4 + 10 * 4;
-        assert_eq!(buffer[offset + 3], 255, "pixel at buffer (10,10) should be drawn");
+        assert_eq!(
+            buffer[offset + 3],
+            255,
+            "pixel at buffer (10,10) should be drawn"
+        );
     }
 
     #[test]
@@ -1137,18 +1334,12 @@ mod tests {
     #[test]
     fn normalize_rect_one_axis_swapped() {
         // x already sorted (0 < 100), y needs swap (200 > 80)
-        assert_eq!(
-            normalize_rect((0, 200), (100, 80)),
-            (0, 80, 100, 200)
-        );
+        assert_eq!(normalize_rect((0, 200), (100, 80)), (0, 80, 100, 200));
     }
 
     #[test]
     fn normalize_rect_zero_origin() {
-        assert_eq!(
-            normalize_rect((0, 0), (0, 0)),
-            (0, 0, 0, 0)
-        );
+        assert_eq!(normalize_rect((0, 0), (0, 0)), (0, 0, 0, 0));
     }
 
     #[test]
@@ -1164,8 +1355,14 @@ mod tests {
         // h=0 s=0.5 v=1.0 should be a desaturated red (pink-ish)
         let (r, g, b) = hsv_to_rgb(0.0, 0.5, 1.0);
         assert_eq!(r, 255, "red channel should be max");
-        assert!(g > 0 && g < 255, "green should be mid-range for desaturated red");
-        assert!(b > 0 && b < 255, "blue should be mid-range for desaturated red");
+        assert!(
+            g > 0 && g < 255,
+            "green should be mid-range for desaturated red"
+        );
+        assert!(
+            b > 0 && b < 255,
+            "blue should be mid-range for desaturated red"
+        );
     }
 
     #[test]
@@ -1178,24 +1375,24 @@ mod tests {
     }
 
     mod missing_tests {
+        use super::super::color_at;
+        use super::super::expected_border_pixel_count;
+        use super::super::fill_border_pixels;
         use super::super::hsv_to_rgb;
         use super::super::perimeter_position;
-        use super::super::color_at;
-        use super::super::fill_border_pixels;
-        use super::super::expected_border_pixel_count;
-        use crate::config::ColorMode;
-        use crate::config::parse_color;
         use crate::config::modifier_vk_codes;
+        use crate::config::parse_color;
         use crate::config::AppConfig;
+        use crate::config::ColorMode;
+        use crate::hook::decide_keyboard;
+        use crate::hook::decide_mouse;
+        use crate::state::InputEvent;
+        use windows::Win32::UI::Input::KeyboardAndMouse::VK_LCONTROL;
         use windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN;
         use windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP;
         use windows::Win32::UI::WindowsAndMessaging::WM_MBUTTONDOWN;
         use windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE;
         use windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP;
-        use windows::Win32::UI::Input::KeyboardAndMouse::VK_LCONTROL;
-        use crate::hook::decide_keyboard;
-        use crate::hook::decide_mouse;
-        use crate::state::InputEvent;
 
         #[test]
         fn hsv_sector_boundary_60() {
@@ -1223,7 +1420,10 @@ mod tests {
             // 200x100 rect: perimeter = 600
             // Mid-bottom edge: total dist = w + h + w/2 = 200 + 100 + 100 = 400, pos = 400/600
             let pos = perimeter_position(100, 100, 0, 0, 200, 100);
-            assert!((pos - (400.0 / 600.0)).abs() < 0.001, "expected ~0.667, got {pos}");
+            assert!(
+                (pos - (400.0 / 600.0)).abs() < 0.001,
+                "expected ~0.667, got {pos}"
+            );
         }
 
         #[test]
@@ -1242,14 +1442,24 @@ mod tests {
         fn perimeter_position_negative_offset_rect() {
             // Rect at (-100,-100) to (100,100), top-left corner
             let pos = perimeter_position(-100, -100, -100, -100, 100, 100);
-            assert!((pos - 0.0).abs() < 0.001, "top-left of negative-offset rect should be ~0.0, got {pos}");
+            assert!(
+                (pos - 0.0).abs() < 0.001,
+                "top-left of negative-offset rect should be ~0.0, got {pos}"
+            );
         }
 
         #[test]
         fn color_at_solid_mode_ignores_position() {
-            let mode = ColorMode::Solid { r: 100, g: 150, b: 200 };
+            let mode = ColorMode::Solid {
+                r: 100,
+                g: 150,
+                b: 200,
+            };
             assert_eq!(color_at(0, 0, 0, 0, 100, 100, &mode, 0.0), (100, 150, 200));
-            assert_eq!(color_at(999, 999, 0, 0, 100, 100, &mode, 0.0), (100, 150, 200));
+            assert_eq!(
+                color_at(999, 999, 0, 0, 100, 100, &mode, 0.0),
+                (100, 150, 200)
+            );
         }
 
         #[test]
@@ -1272,8 +1482,16 @@ mod tests {
             let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
             let mut buffer = vec![0u8; 100];
             let (unique, total) = fill_border_pixels(
-                &mut buffer, -1, 100, 0, 0,
-                (0, 0), (10, 10), 4, &color_mode, 0.0,
+                &mut buffer,
+                -1,
+                100,
+                0,
+                0,
+                (0, 0),
+                (10, 10),
+                4,
+                &color_mode,
+                0.0,
             );
             assert_eq!(unique, 0);
             assert_eq!(total, 0);
@@ -1284,8 +1502,16 @@ mod tests {
             let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
             let mut buffer = vec![0u8; 100];
             let (unique, total) = fill_border_pixels(
-                &mut buffer, 100, -1, 0, 0,
-                (0, 0), (10, 10), 4, &color_mode, 0.0,
+                &mut buffer,
+                100,
+                -1,
+                0,
+                0,
+                (0, 0),
+                (10, 10),
+                4,
+                &color_mode,
+                0.0,
             );
             assert_eq!(unique, 0);
             assert_eq!(total, 0);
@@ -1296,11 +1522,22 @@ mod tests {
             let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
             let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
             let (unique, total) = fill_border_pixels(
-                &mut buffer, 100, 100, 0, 0,
-                (10, 10), (20, 20), 1, &color_mode, 0.0,
+                &mut buffer,
+                100,
+                100,
+                0,
+                0,
+                (10, 10),
+                (20, 20),
+                1,
+                &color_mode,
+                0.0,
             );
             let expected = expected_border_pixel_count(10, 10, 20, 20, 1);
-            assert_eq!(unique, expected, "border_width=1 should match expected count");
+            assert_eq!(
+                unique, expected,
+                "border_width=1 should match expected count"
+            );
             assert_eq!(total, expected, "no duplicate writes with border_width=1");
         }
 
@@ -1309,11 +1546,22 @@ mod tests {
             let color_mode = ColorMode::Solid { r: 255, g: 0, b: 0 };
             let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
             let (unique, _) = fill_border_pixels(
-                &mut buffer, 100, 100, 0, 0,
-                (200, 200), (300, 300), 4, &color_mode, 0.0,
+                &mut buffer,
+                100,
+                100,
+                0,
+                0,
+                (200, 200),
+                (300, 300),
+                4,
+                &color_mode,
+                0.0,
             );
             assert_eq!(unique, 0, "rect outside window should write nothing");
-            assert!(buffer.iter().all(|&b| b == 0), "buffer should remain all zeros");
+            assert!(
+                buffer.iter().all(|&b| b == 0),
+                "buffer should remain all zeros"
+            );
         }
 
         #[test]
@@ -1321,34 +1569,72 @@ mod tests {
             let color_mode = ColorMode::Solid { r: 0, g: 0, b: 255 };
             let mut buffer = vec![0u8; (50 * 50 * 4) as usize];
             let (unique, total) = fill_border_pixels(
-                &mut buffer, 50, 50, 0, 0,
-                (-10, -10), (30, 30), 2, &color_mode, 0.0,
+                &mut buffer,
+                50,
+                50,
+                0,
+                0,
+                (-10, -10),
+                (30, 30),
+                2,
+                &color_mode,
+                0.0,
             );
             assert!(unique > 0, "partially visible rect should draw some pixels");
             let expected = expected_border_pixel_count(0, 0, 30, 30, 2);
-            assert_eq!(unique, expected, "visible portion pixel count should match expected");
+            assert_eq!(
+                unique, expected,
+                "visible portion pixel count should match expected"
+            );
             assert_eq!(total, expected, "no duplicate writes in clipped rect");
         }
 
         #[test]
         fn fill_border_negative_start_coords() {
-            let color_mode = ColorMode::Solid { r: 255, g: 255, b: 0 };
+            let color_mode = ColorMode::Solid {
+                r: 255,
+                g: 255,
+                b: 0,
+            };
             let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
             let (unique, _) = fill_border_pixels(
-                &mut buffer, 100, 100, -60, -60,
-                (-50, -50), (-40, -40), 2, &color_mode, 0.0,
+                &mut buffer,
+                100,
+                100,
+                -60,
+                -60,
+                (-50, -50),
+                (-40, -40),
+                2,
+                &color_mode,
+                0.0,
             );
-            assert!(unique > 0, "negative global coords should still draw into buffer");
+            assert!(
+                unique > 0,
+                "negative global coords should still draw into buffer"
+            );
             let offset = 10 * 100 * 4 + 10 * 4;
-            assert_eq!(buffer[offset + 3], 255, "pixel at buffer (10,10) should be drawn");
+            assert_eq!(
+                buffer[offset + 3],
+                255,
+                "pixel at buffer (10,10) should be drawn"
+            );
         }
 
         #[test]
         fn fill_border_rainbow_mode() {
             let mut buffer = vec![0u8; (100 * 100 * 4) as usize];
             let (unique, _) = fill_border_pixels(
-                &mut buffer, 100, 100, 0, 0,
-                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.0,
+                &mut buffer,
+                100,
+                100,
+                0,
+                0,
+                (10, 10),
+                (50, 50),
+                2,
+                &ColorMode::Rainbow,
+                0.0,
             );
             assert!(unique > 0, "rainbow mode should draw pixels");
             // Top-left corner pixel (10,10): perimeter pos ~0.0, hue ~0 (red)
@@ -1358,7 +1644,8 @@ mod tests {
             let off_br = 49 * 100 * 4 + 49 * 4;
             let (r_br, g_br, b_br) = (buffer[off_br + 2], buffer[off_br + 1], buffer[off_br]);
             assert_ne!(
-                (r_tl, g_tl, b_tl), (r_br, g_br, b_br),
+                (r_tl, g_tl, b_tl),
+                (r_br, g_br, b_br),
                 "opposite corners should produce different rainbow colors"
             );
         }
@@ -1368,28 +1655,54 @@ mod tests {
             let mut buf0 = vec![0u8; (100 * 100 * 4) as usize];
             let mut buf1 = vec![0u8; (100 * 100 * 4) as usize];
             let (u0, _) = fill_border_pixels(
-                &mut buf0, 100, 100, 0, 0,
-                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.0,
+                &mut buf0,
+                100,
+                100,
+                0,
+                0,
+                (10, 10),
+                (50, 50),
+                2,
+                &ColorMode::Rainbow,
+                0.0,
             );
             let (u1, _) = fill_border_pixels(
-                &mut buf1, 100, 100, 0, 0,
-                (10, 10), (50, 50), 2, &ColorMode::Rainbow, 0.5,
+                &mut buf1,
+                100,
+                100,
+                0,
+                0,
+                (10, 10),
+                (50, 50),
+                2,
+                &ColorMode::Rainbow,
+                0.5,
             );
             assert_eq!(u0, u1, "same rect should write same number of pixels");
             let off = 10 * 100 * 4 + 10 * 4;
-            assert_ne!(buf0[off + 2], buf1[off + 2], "time_offset should shift colors");
+            assert_ne!(
+                buf0[off + 2],
+                buf1[off + 2],
+                "time_offset should shift colors"
+            );
         }
 
         #[test]
         fn expected_border_pixel_count_single_pixel_rect() {
             let count = expected_border_pixel_count(5, 5, 5, 5, 1);
-            assert_eq!(count, 1, "single-pixel rect should have exactly 1 border pixel");
+            assert_eq!(
+                count, 1,
+                "single-pixel rect should have exactly 1 border pixel"
+            );
         }
 
         #[test]
         fn expected_border_pixel_count_border_1() {
             let count = expected_border_pixel_count(0, 0, 10, 10, 1);
-            assert_eq!(count, 40, "10x10 rect border=1 should be 40 pixels (inclusive bounds: 11x11 area)");
+            assert_eq!(
+                count, 40,
+                "10x10 rect border=1 should be 40 pixels (inclusive bounds: 11x11 area)"
+            );
         }
 
         #[test]
@@ -1401,23 +1714,20 @@ mod tests {
             // offset 3: 5*2 + 3*2 = 16
             // offset 4: single row = 3*2 + 1*2 = 8
             let count = expected_border_pixel_count(0, 0, 10, 10, 5);
-            assert_eq!(count, 120, "10x10 rect border=5 should fill interior (120 pixels, inclusive bounds)");
+            assert_eq!(
+                count, 120,
+                "10x10 rect border=5 should fill interior (120 pixels, inclusive bounds)"
+            );
         }
 
         #[test]
         fn color_parse_empty_string_returns_default_solid() {
-            assert_eq!(
-                parse_color(""),
-                ColorMode::Solid { r: 255, g: 0, b: 0 }
-            );
+            assert_eq!(parse_color(""), ColorMode::Solid { r: 255, g: 0, b: 0 });
         }
 
         #[test]
         fn color_parse_short_hex_returns_default_solid() {
-            assert_eq!(
-                parse_color("#FFF"),
-                ColorMode::Solid { r: 255, g: 0, b: 0 }
-            );
+            assert_eq!(parse_color("#FFF"), ColorMode::Solid { r: 255, g: 0, b: 0 });
         }
 
         #[test]
@@ -1440,7 +1750,11 @@ mod tests {
         fn color_parse_hex_all_ones() {
             assert_eq!(
                 parse_color("#FFFFFF"),
-                ColorMode::Solid { r: 255, g: 255, b: 255 }
+                ColorMode::Solid {
+                    r: 255,
+                    g: 255,
+                    b: 255
+                }
             );
         }
 
@@ -1460,7 +1774,11 @@ mod tests {
         fn color_parse_mixed_case_hex() {
             assert_eq!(
                 parse_color("#aAbBcC"),
-                ColorMode::Solid { r: 170, g: 187, b: 204 }
+                ColorMode::Solid {
+                    r: 170,
+                    g: 187,
+                    b: 204
+                }
             );
         }
 
@@ -1521,7 +1839,14 @@ modifier = "Ctrl""#;
         fn parse_color_hex_with_hash_via_parse() {
             let toml_str = r##"color = "#FF00FF""##;
             let cfg = AppConfig::parse(toml_str).unwrap();
-            assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 255 });
+            assert_eq!(
+                cfg.color_mode,
+                ColorMode::Solid {
+                    r: 255,
+                    g: 0,
+                    b: 255
+                }
+            );
         }
 
         #[test]
@@ -1563,27 +1888,38 @@ modifier = "Ctrl""#;
         #[test]
         fn decide_keyboard_single_element_exact_match() {
             let codes = vec![0x12];
-            assert_eq!(decide_keyboard(0x12, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
-            assert_eq!(decide_keyboard(0x12, false, &codes, false), Some(InputEvent::ModifierChanged { pressed: false }));
+            assert_eq!(
+                decide_keyboard(0x12, true, &codes, false),
+                Some(InputEvent::ModifierChanged { pressed: true })
+            );
+            assert_eq!(
+                decide_keyboard(0x12, false, &codes, false),
+                Some(InputEvent::ModifierChanged { pressed: false })
+            );
             assert_eq!(decide_keyboard(0x11, true, &codes, false), None);
         }
 
         #[test]
         fn decide_keyboard_duplicate_modifier_codes_matches() {
             let codes = vec![0x12, 0x12, 0xA4];
-            assert_eq!(decide_keyboard(0x12, true, &codes, false), Some(InputEvent::ModifierChanged { pressed: true }));
+            assert_eq!(
+                decide_keyboard(0x12, true, &codes, false),
+                Some(InputEvent::ModifierChanged { pressed: true })
+            );
         }
 
         #[test]
         fn decide_mouse_zero_coordinates() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (0, 0), true, false, true, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_LBUTTONDOWN, (0, 0), true, false, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 0, y: 0 }));
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_negative_coordinates() {
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (-100, -200), false, true, false, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_MOUSEMOVE, (-100, -200), false, true, false, false, 0);
             assert_eq!(event, Some(InputEvent::MouseMove { x: -100, y: -200 }));
             assert!(!suppress);
         }
@@ -1597,49 +1933,69 @@ modifier = "Ctrl""#;
 
         #[test]
         fn decide_mouse_extreme_coordinates() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (i32::MAX, i32::MIN), true, false, true, false, 0);
-            assert_eq!(event, Some(InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN }));
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONDOWN,
+                (i32::MAX, i32::MIN),
+                true,
+                false,
+                true,
+                false,
+                0,
+            );
+            assert_eq!(
+                event,
+                Some(InputEvent::MouseButtonDown {
+                    x: i32::MAX,
+                    y: i32::MIN
+                })
+            );
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_unknown_msg_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_MBUTTONDOWN, (100, 200), false, true, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_rbuttonup_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_RBUTTONUP, (100, 200), false, true, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_lbuttondown_during_drag_passes_through() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (200, 300), true, true, true, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_LBUTTONDOWN, (200, 300), true, true, true, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_suppress_false_modifier_held_true_no_drag() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (100, 200), false, false, true, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_LBUTTONDOWN, (100, 200), false, false, true, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
         }
 
         #[test]
         fn decide_mouse_drag_with_modifier_held_and_suppress() {
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (400, 500), true, true, true, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_LBUTTONUP, (400, 500), true, true, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 400, y: 500 }));
             assert!(suppress);
         }
 
         #[test]
         fn decide_mouse_move_during_drag_with_all_flags_true() {
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 60), true, true, true, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_MOUSEMOVE, (50, 60), true, true, true, false, 0);
             assert_eq!(event, Some(InputEvent::MouseMove { x: 50, y: 60 }));
             assert!(!suppress);
         }
@@ -1654,16 +2010,40 @@ modifier = "Ctrl""#;
             assert_eq!(event, Some(InputEvent::ModifierChanged { pressed: true }));
             should_suppress = true;
 
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (50, 75), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONDOWN,
+                (50, 75),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 50, y: 75 }));
             assert!(suppress);
             drag_in_progress = true;
 
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (150, 175), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_MOUSEMOVE,
+                (150, 175),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert_eq!(event, Some(InputEvent::MouseMove { x: 150, y: 175 }));
             assert!(!suppress);
 
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (200, 250), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONUP,
+                (200, 250),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 200, y: 250 }));
             assert!(suppress);
             drag_in_progress = false;
@@ -1679,7 +2059,8 @@ modifier = "Ctrl""#;
         fn multiple_mouse_moves_during_drag_all_track() {
             let coords = [(10, 20), (30, 40), (50, 60), (70, 80), (90, 100)];
             for &(x, y) in &coords {
-                let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (x, y), true, true, true, false, 0);
+                let (event, suppress) =
+                    decide_mouse(WM_MOUSEMOVE, (x, y), true, true, true, false, 0);
                 assert_eq!(event, Some(InputEvent::MouseMove { x, y }));
                 assert!(!suppress);
             }
@@ -1692,26 +2073,59 @@ modifier = "Ctrl""#;
 
             // Cycle 1
             should_suppress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (10, 10), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONDOWN,
+                (10, 10),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert!(suppress);
             drag_in_progress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (20, 20), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONUP,
+                (20, 20),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert!(suppress);
             drag_in_progress = false;
             should_suppress = false;
 
             // Idle
-            let (event, suppress) = decide_mouse(WM_MOUSEMOVE, (50, 50), false, false, false, false, 0);
+            let (event, suppress) =
+                decide_mouse(WM_MOUSEMOVE, (50, 50), false, false, false, false, 0);
             assert_eq!(event, None);
             assert!(!suppress);
 
             // Cycle 2
             should_suppress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONDOWN, (30, 30), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONDOWN,
+                (30, 30),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert_eq!(event, Some(InputEvent::MouseButtonDown { x: 30, y: 30 }));
             assert!(suppress);
             drag_in_progress = true;
-            let (event, suppress) = decide_mouse(WM_LBUTTONUP, (40, 40), should_suppress, drag_in_progress, true, false, 0);
+            let (event, suppress) = decide_mouse(
+                WM_LBUTTONUP,
+                (40, 40),
+                should_suppress,
+                drag_in_progress,
+                true,
+                false,
+                0,
+            );
             assert_eq!(event, Some(InputEvent::MouseButtonUp { x: 40, y: 40 }));
             assert!(suppress);
             drag_in_progress = false;
@@ -1738,7 +2152,11 @@ modifier = "Ctrl""#;
             } else {
                 dx.max(dy).max(0.0)
             };
-            assert!(dist <= RADIUS - BORDER_W, "Center pixel dist={} should be inside border (interior)", dist);
+            assert!(
+                dist <= RADIUS - BORDER_W,
+                "Center pixel dist={} should be inside border (interior)",
+                dist
+            );
         }
     }
 
@@ -1755,7 +2173,11 @@ modifier = "Ctrl""#;
             dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
 
             let outside_offset = (0 * width as usize + 0) * 4;
-            assert_eq!(buf[outside_offset + 3], 160, "outside pixel alpha should be 160");
+            assert_eq!(
+                buf[outside_offset + 3],
+                160,
+                "outside pixel alpha should be 160"
+            );
             assert_eq!(buf[outside_offset], 0, "B=0");
             assert_eq!(buf[outside_offset + 1], 0, "G=0");
             assert_eq!(buf[outside_offset + 2], 0, "R=0");
@@ -1795,13 +2217,25 @@ modifier = "Ctrl""#;
             dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
 
             let inside_offset = (7 * width as usize + 7) * 4;
-            assert_eq!(buf[inside_offset + 3], 0, "spotlight interior should be clear");
+            assert_eq!(
+                buf[inside_offset + 3],
+                0,
+                "spotlight interior should be clear"
+            );
 
             let outside_offset = (0 * width as usize + 0) * 4;
-            assert_eq!(buf[outside_offset + 3], 160, "outside spotlight should be dimmed");
+            assert_eq!(
+                buf[outside_offset + 3],
+                160,
+                "outside spotlight should be dimmed"
+            );
 
             let non_spotlight_interior = (15 * width as usize + 15) * 4;
-            assert_eq!(buf[non_spotlight_interior + 3], 160, "non-spotlight interior stays dimmed");
+            assert_eq!(
+                buf[non_spotlight_interior + 3],
+                160,
+                "non-spotlight interior stays dimmed"
+            );
         }
 
         #[test]
@@ -1814,10 +2248,18 @@ modifier = "Ctrl""#;
             dim_outside_spotlights(&mut buf, width, height, &rects, 0, 0);
 
             let overlap_offset = (7 * width as usize + 7) * 4;
-            assert_eq!(buf[overlap_offset + 3], 0, "overlap interior should be clear");
+            assert_eq!(
+                buf[overlap_offset + 3],
+                0,
+                "overlap interior should be clear"
+            );
 
             let outside_offset = (0 * width as usize + 0) * 4;
-            assert_eq!(buf[outside_offset + 3], 160, "outside both should be dimmed");
+            assert_eq!(
+                buf[outside_offset + 3],
+                160,
+                "outside both should be dimmed"
+            );
         }
 
         #[test]
@@ -1830,10 +2272,18 @@ modifier = "Ctrl""#;
             dim_outside_spotlights(&mut buf, width, height, &rects, 10, 10);
 
             let inside_offset = (4 * width as usize + 4) * 4;
-            assert_eq!(buf[inside_offset + 3], 0, "inside should be clear with offset");
+            assert_eq!(
+                buf[inside_offset + 3],
+                0,
+                "inside should be clear with offset"
+            );
 
             let outside_offset = 0;
-            assert_eq!(buf[outside_offset + 3], 160, "outside should be dimmed with offset");
+            assert_eq!(
+                buf[outside_offset + 3],
+                160,
+                "outside should be dimmed with offset"
+            );
         }
     }
 
