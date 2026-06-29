@@ -1418,7 +1418,10 @@ mod tests {
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
+        assert!(
+            next.magnifier_active,
+            "magnifier_active should persist after modifier release"
+        );
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
@@ -1433,7 +1436,10 @@ mod tests {
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
+        assert!(
+            next.magnifier_active,
+            "magnifier_active should persist after modifier release"
+        );
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 }

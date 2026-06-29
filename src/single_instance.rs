@@ -213,11 +213,7 @@ mod tests {
     fn test_try_acquire_with_name(name: &str) -> SingleInstance {
         unsafe {
             let mutex_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-            let handle = CreateMutexW(
-                None,
-                false,
-                windows::core::PCWSTR(mutex_name.as_ptr()),
-            );
+            let handle = CreateMutexW(None, false, windows::core::PCWSTR(mutex_name.as_ptr()));
             match handle {
                 Ok(h) => {
                     let last_error = windows::Win32::Foundation::GetLastError();
