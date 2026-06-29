@@ -111,7 +111,11 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
         return;
     }
 
-    let dir_wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let dir_wide: Vec<u16> = dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     let dir_handle = unsafe {
         CreateFileW(
@@ -158,16 +162,24 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
         // Layout: NextEntryOffset(u32, 0) + Action(u32, 4) + FileNameLength(u32, 8) + FileName(u16[], 12)
         let mut offset = 0usize;
         loop {
-            if offset + 12 > buffer.len() { break; }
-            let next_offset = u32::from_ne_bytes(buffer[offset..offset+4].try_into().unwrap());
-            let name_len = u32::from_ne_bytes(buffer[offset+8..offset+12].try_into().unwrap()) as usize / 2;
+            if offset + 12 > buffer.len() {
+                break;
+            }
+            let next_offset = u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap());
+            let name_len = u32::from_ne_bytes(buffer[offset + 8..offset + 12].try_into().unwrap())
+                as usize
+                / 2;
             let name_start = offset + 12;
             let name_end = name_start + name_len * 2;
-            if name_end > buffer.len() { break; }
+            if name_end > buffer.len() {
+                break;
+            }
 
             let name_bytes = &buffer[name_start..name_end];
             let name = String::from_utf16_lossy(
-                &(0..name_len).map(|i| u16::from_ne_bytes([name_bytes[i*2], name_bytes[i*2+1]])).collect::<Vec<_>>()
+                &(0..name_len)
+                    .map(|i| u16::from_ne_bytes([name_bytes[i * 2], name_bytes[i * 2 + 1]]))
+                    .collect::<Vec<_>>(),
             );
 
             if name.eq_ignore_ascii_case("config.toml") {
@@ -180,12 +192,16 @@ pub fn watch_config_dir(dir: std::path::PathBuf, tx: std::sync::mpsc::Sender<App
                 break;
             }
 
-            if next_offset == 0 { break; }
+            if next_offset == 0 {
+                break;
+            }
             offset += next_offset as usize;
         }
     }
 
-    unsafe { let _ = CloseHandle(handle); }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
 }
 
 #[cfg(test)]
@@ -279,10 +295,7 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.modifier_vk_codes, vec![0x12, 0xA4, 0xA5]);
         assert_eq!(cfg.border_width, 4);
-        assert_eq!(
-            cfg.color_mode,
-            ColorMode::Solid { r: 255, g: 0, b: 0 }
-        );
+        assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 0 });
     }
 
     #[test]
@@ -304,10 +317,7 @@ mod tests {
         let cfg = AppConfig::parse(toml_str).unwrap();
         assert_eq!(cfg.modifier_vk_codes, vec![0x10, 0xA0, 0xA1]);
         assert_eq!(cfg.border_width, 4);
-        assert_eq!(
-            cfg.color_mode,
-            ColorMode::Solid { r: 255, g: 0, b: 0 }
-        );
+        assert_eq!(cfg.color_mode, ColorMode::Solid { r: 255, g: 0, b: 0 });
     }
 
     #[test]
@@ -354,28 +364,19 @@ mod tests {
 
     #[test]
     fn color_parse_empty_string_returns_default_red() {
-        assert_eq!(
-            parse_color(""),
-            ColorMode::Solid { r: 255, g: 0, b: 0 }
-        );
+        assert_eq!(parse_color(""), ColorMode::Solid { r: 255, g: 0, b: 0 });
     }
 
     #[test]
     fn color_parse_hash_only_returns_default_red() {
         // "#" stripped leaves "", len 0 != 6, falls through to default
-        assert_eq!(
-            parse_color("#"),
-            ColorMode::Solid { r: 255, g: 0, b: 0 }
-        );
+        assert_eq!(parse_color("#"), ColorMode::Solid { r: 255, g: 0, b: 0 });
     }
 
     #[test]
     fn color_parse_short_hex_3_chars_returns_default_red() {
         // 3-char hex not supported, falls through
-        assert_eq!(
-            parse_color("F00"),
-            ColorMode::Solid { r: 255, g: 0, b: 0 }
-        );
+        assert_eq!(parse_color("F00"), ColorMode::Solid { r: 255, g: 0, b: 0 });
     }
 
     #[test]
@@ -399,7 +400,11 @@ mod tests {
     fn color_parse_hex_all_ff() {
         assert_eq!(
             parse_color("#FFFFFF"),
-            ColorMode::Solid { r: 255, g: 255, b: 255 }
+            ColorMode::Solid {
+                r: 255,
+                g: 255,
+                b: 255
+            }
         );
     }
 
@@ -532,7 +537,12 @@ mod tests {
         let half = (SIZE as f64 - 1.0 - INSET * 2.0) / 2.0;
         let cx = (SIZE as f64 - 1.0) / 2.0;
         let cy = (SIZE as f64 - 1.0) / 2.0;
-        let corners = [(0usize, 0usize), (0, SIZE - 1), (SIZE - 1, 0), (SIZE - 1, SIZE - 1)];
+        let corners = [
+            (0usize, 0usize),
+            (0, SIZE - 1),
+            (SIZE - 1, 0),
+            (SIZE - 1, SIZE - 1),
+        ];
         for (y, x) in corners {
             let dx = (x as f64 - cx).abs() - (half - RADIUS);
             let dy = (y as f64 - cy).abs() - (half - RADIUS);
@@ -541,7 +551,13 @@ mod tests {
             } else {
                 dx.max(dy).max(0.0)
             };
-            assert!(dist > RADIUS, "Corner ({}, {}) dist={} should be outside rounded rect", x, y, dist);
+            assert!(
+                dist > RADIUS,
+                "Corner ({}, {}) dist={} should be outside rounded rect",
+                x,
+                y,
+                dist
+            );
         }
     }
 }

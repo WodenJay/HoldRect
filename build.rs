@@ -66,9 +66,9 @@ fn generate_ico() -> std::path::PathBuf {
         for x in 0..SIZE {
             let s = (src_row * SIZE + x) * 4;
             let d = (dst_row * SIZE + x) * 4;
-            bgra[d] = rgba[s + 2];     // B
+            bgra[d] = rgba[s + 2]; // B
             bgra[d + 1] = rgba[s + 1]; // G
-            bgra[d + 2] = rgba[s];     // R
+            bgra[d + 2] = rgba[s]; // R
             bgra[d + 3] = rgba[s + 3]; // A
         }
     }
@@ -85,7 +85,7 @@ fn generate_ico() -> std::path::PathBuf {
     ico.extend_from_slice(&0u16.to_le_bytes()); // reserved
     ico.extend_from_slice(&1u16.to_le_bytes()); // type = ICO
     ico.extend_from_slice(&1u16.to_le_bytes()); // count = 1
-    // ICONDIRENTRY
+                                                // ICONDIRENTRY
     ico.push(SIZE as u8); // width
     ico.push(SIZE as u8); // height
     ico.push(0); // color count (0 for 32bpp)
@@ -103,7 +103,7 @@ fn generate_ico() -> std::path::PathBuf {
     ico.extend_from_slice(&0u32.to_le_bytes()); // compression
     ico.extend_from_slice(&(SIZE as u32 * SIZE as u32 * 4).to_le_bytes()); // image size
     ico.extend_from_slice(&[0u8; 16]); // rest of header (zeroed)
-    // XOR mask (BGRA pixels)
+                                       // XOR mask (BGRA pixels)
     ico.extend_from_slice(&bgra);
     // AND mask
     ico.extend_from_slice(&and_mask);

@@ -1,7 +1,7 @@
+use super::{PopupContent, PopupManager};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use super::{PopupManager, PopupContent};
 
 const STATUS_HEIGHT: i32 = 56;
 const STATUS_RADIUS: i32 = STATUS_HEIGHT / 2; // capsule
@@ -17,7 +17,7 @@ const CHEATSHEET_PADDING_H: i32 = 28;
 const BG_R: u8 = 255;
 const BG_G: u8 = 255;
 const BG_B: u8 = 255;
-const BG_A_STATUS: u8 = 255;   // fully opaque
+const BG_A_STATUS: u8 = 255; // fully opaque
 const BG_A_CHEATSHEET: u8 = 255; // fully opaque
 
 const SHADOW_COLOR: (u8, u8, u8) = (0, 0, 0);
@@ -26,7 +26,7 @@ pub struct GdiRenderer {
     hwnd: HWND,
     mem_dc: HDC,
     mem_bitmap: HBITMAP,
-    original_stock_bitmap: HBITMAP,  // never deleted — restored in Drop
+    original_stock_bitmap: HBITMAP, // never deleted — restored in Drop
     font_normal: HFONT,
     font_key: HFONT,
     font_desc: HFONT,
@@ -53,15 +53,22 @@ impl GdiRenderer {
                     biHeight: -height, // top-down
                     biPlanes: 1,
                     biBitCount: 32,
-                    biCompression: BI_RGB.0 as u32,
+                    biCompression: BI_RGB.0,
                     ..Default::default()
                 },
                 ..Default::default()
             };
 
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let mem_bitmap = CreateDIBSection(None, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
-                .expect("CreateDIBSection failed");
+            let mem_bitmap = CreateDIBSection(
+                None,
+                &bi,
+                DIB_RGB_COLORS,
+                &mut pixels as *mut *mut u8 as _,
+                None,
+                0,
+            )
+            .expect("CreateDIBSection failed");
             let original_stock_bitmap = SelectObject(mem_dc, mem_bitmap);
             let original_stock_bitmap = HBITMAP(original_stock_bitmap.0);
 
@@ -104,14 +111,21 @@ impl GdiRenderer {
                     biHeight: -height,
                     biPlanes: 1,
                     biBitCount: 32,
-                    biCompression: BI_RGB.0 as u32,
+                    biCompression: BI_RGB.0,
                     ..Default::default()
                 },
                 ..Default::default()
             };
             let mut pixels: *mut u8 = std::ptr::null_mut();
-            let mem_bitmap = CreateDIBSection(None, &bi, DIB_RGB_COLORS, &mut pixels as *mut *mut u8 as _, None, 0)
-                .expect("CreateDIBSection failed");
+            let mem_bitmap = CreateDIBSection(
+                None,
+                &bi,
+                DIB_RGB_COLORS,
+                &mut pixels as *mut *mut u8 as _,
+                None,
+                0,
+            )
+            .expect("CreateDIBSection failed");
             // Select new bitmap — don't update original_stock_bitmap
             SelectObject(self.mem_dc, mem_bitmap);
             self.mem_bitmap = mem_bitmap;
@@ -125,7 +139,9 @@ impl GdiRenderer {
     pub fn render(&mut self, manager: &PopupManager, monitor_rect: (i32, i32, i32, i32)) {
         if !manager.is_visible() {
             if self.is_shown {
-                unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+                unsafe {
+                    let _ = ShowWindow(self.hwnd, SW_HIDE);
+                }
                 self.is_shown = false;
             }
             return;
@@ -145,7 +161,14 @@ impl GdiRenderer {
         }
     }
 
-    fn render_status(&mut self, manager: &PopupManager, mon_left: i32, mon_top: i32, mon_width: i32, y_offset: i32) {
+    fn render_status(
+        &mut self,
+        manager: &PopupManager,
+        mon_left: i32,
+        mon_top: i32,
+        mon_width: i32,
+        y_offset: i32,
+    ) {
         let text = manager.status_text();
         let text_w = measure_text_width(self.mem_dc, self.font_normal, text);
         let popup_w = text_w + STATUS_PADDING_H * 2;
@@ -164,10 +187,34 @@ impl GdiRenderer {
             let card_y = shadow_margin;
 
             // Shadow layers
-            paint_shadow(self.pixels, buf_w, buf_h, card_x + 2, card_y + 2, popup_w, popup_h, STATUS_RADIUS, SHADOW_COLOR, 55);
+            paint_shadow(
+                self.pixels,
+                buf_w,
+                buf_h,
+                card_x + 2,
+                card_y + 2,
+                popup_w,
+                popup_h,
+                STATUS_RADIUS,
+                SHADOW_COLOR,
+                55,
+            );
 
             // Card background
-            paint_rounded_rect(self.pixels, buf_w, buf_h, card_x, card_y, popup_w, popup_h, STATUS_RADIUS, BG_R, BG_G, BG_B, BG_A_STATUS);
+            paint_rounded_rect(
+                self.pixels,
+                buf_w,
+                buf_h,
+                card_x,
+                card_y,
+                popup_w,
+                popup_h,
+                STATUS_RADIUS,
+                BG_R,
+                BG_G,
+                BG_B,
+                BG_A_STATUS,
+            );
 
             // Text
             SelectObject(self.mem_dc, self.font_normal);
@@ -180,7 +227,12 @@ impl GdiRenderer {
                 right: card_x + popup_w - STATUS_PADDING_H,
                 bottom: card_y + popup_h,
             };
-            DrawTextW(self.mem_dc, &mut text_wide, &mut text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(
+                self.mem_dc,
+                &mut text_wide,
+                &mut text_rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
             fix_text_alpha(self.pixels, buf_w, buf_h, &text_rect);
 
             // Position and show window
@@ -189,14 +241,28 @@ impl GdiRenderer {
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
             if !self.is_shown {
-                let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
                 self.is_shown = true;
             }
         }
     }
 
-    fn render_cheatsheet(&mut self, manager: &PopupManager, mon_left: i32, mon_top: i32, mon_width: i32, y_offset: i32) {
+    fn render_cheatsheet(
+        &mut self,
+        manager: &PopupManager,
+        mon_left: i32,
+        mon_top: i32,
+        mon_width: i32,
+        y_offset: i32,
+    ) {
         let rows = manager.cheatsheet_rows();
         let row_count = rows.len() as i32;
         let popup_w = CHEATSHEET_WIDTH;
@@ -214,10 +280,34 @@ impl GdiRenderer {
             let card_y = shadow_margin;
 
             // Shadow
-            paint_shadow(self.pixels, buf_w, buf_h, card_x + 4, card_y + 4, popup_w, popup_h, CHEATSHEET_RADIUS, SHADOW_COLOR, 80);
+            paint_shadow(
+                self.pixels,
+                buf_w,
+                buf_h,
+                card_x + 4,
+                card_y + 4,
+                popup_w,
+                popup_h,
+                CHEATSHEET_RADIUS,
+                SHADOW_COLOR,
+                80,
+            );
 
             // Card background
-            paint_rounded_rect(self.pixels, buf_w, buf_h, card_x, card_y, popup_w, popup_h, CHEATSHEET_RADIUS, BG_R, BG_G, BG_B, BG_A_CHEATSHEET);
+            paint_rounded_rect(
+                self.pixels,
+                buf_w,
+                buf_h,
+                card_x,
+                card_y,
+                popup_w,
+                popup_h,
+                CHEATSHEET_RADIUS,
+                BG_R,
+                BG_G,
+                BG_B,
+                BG_A_CHEATSHEET,
+            );
 
             // Text rows
             for (i, (key, desc)) in rows.iter().enumerate() {
@@ -234,7 +324,12 @@ impl GdiRenderer {
                     right: card_x + popup_w / 2,
                     bottom: row_y + CHEATSHEET_ROW_HEIGHT,
                 };
-                DrawTextW(self.mem_dc, &mut key_w, &mut key_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    self.mem_dc,
+                    &mut key_w,
+                    &mut key_rect,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
                 fix_text_alpha(self.pixels, buf_w, buf_h, &key_rect);
 
                 // Desc (right-aligned, regular)
@@ -247,7 +342,12 @@ impl GdiRenderer {
                     right: card_x + popup_w - CHEATSHEET_PADDING_H,
                     bottom: row_y + CHEATSHEET_ROW_HEIGHT,
                 };
-                DrawTextW(self.mem_dc, &mut desc_w, &mut desc_rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(
+                    self.mem_dc,
+                    &mut desc_w,
+                    &mut desc_rect,
+                    DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+                );
                 fix_text_alpha(self.pixels, buf_w, buf_h, &desc_rect);
             }
 
@@ -257,8 +357,15 @@ impl GdiRenderer {
 
             commit_layered(self.hwnd, self.mem_dc, buf_w, buf_h, x, y);
             if !self.is_shown {
-                let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
                 self.is_shown = true;
             }
         }
@@ -281,21 +388,47 @@ impl Drop for GdiRenderer {
 unsafe fn create_font(size: i32, weight: u32) -> HFONT {
     let face_name: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
     CreateFontW(
-        -size, 0, 0, 0, weight as i32, 0, 0, 0,
-        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32,
-        CLIP_DEFAULT_PRECIS.0 as u32, ANTIALIASED_QUALITY.0 as u32,
+        -size,
+        0,
+        0,
+        0,
+        weight as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET.0 as u32,
+        OUT_DEFAULT_PRECIS.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32,
+        ANTIALIASED_QUALITY.0 as u32,
         DEFAULT_PITCH.0 as u32,
         windows::core::PCWSTR(face_name.as_ptr()),
     )
 }
 
 unsafe fn clear_buffer(pixels: *mut u8, width: i32, height: i32) {
-    debug_assert!(width > 0 && height > 0, "clear_buffer: width={width}, height={height}");
+    debug_assert!(
+        width > 0 && height > 0,
+        "clear_buffer: width={width}, height={height}"
+    );
     let total = (width * height * 4) as usize;
     std::ptr::write_bytes(pixels, 0, total);
 }
 
-unsafe fn paint_rounded_rect(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, radius: i32, r: u8, g: u8, b: u8, a: u8) {
+#[allow(clippy::too_many_arguments)]
+unsafe fn paint_rounded_rect(
+    pixels: *mut u8,
+    buf_w: i32,
+    buf_h: i32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+) {
     debug_assert!(x >= 0 && y >= 0, "paint_rounded_rect: x={x}, y={y}");
     for py in 0..h {
         for px in 0..w {
@@ -313,12 +446,37 @@ unsafe fn paint_rounded_rect(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y:
     }
 }
 
-unsafe fn paint_shadow(pixels: *mut u8, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, radius: i32, color: (u8, u8, u8), base_alpha: u8) {
+#[allow(clippy::too_many_arguments)]
+unsafe fn paint_shadow(
+    pixels: *mut u8,
+    buf_w: i32,
+    buf_h: i32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    color: (u8, u8, u8),
+    base_alpha: u8,
+) {
     // Layered shadow: 3 layers at increasing offsets and decreasing alpha
     for i in 0..3 {
-        let offset = (i + 1) as i32;
+        let offset = i + 1;
         let alpha = (base_alpha as u32 * (3 - i) as u32 / 3) as u8;
-        paint_rounded_rect(pixels, buf_w, buf_h, x + offset, y + offset, w, h, radius + offset, color.0, color.1, color.2, alpha);
+        paint_rounded_rect(
+            pixels,
+            buf_w,
+            buf_h,
+            x + offset,
+            y + offset,
+            w,
+            h,
+            radius + offset,
+            color.0,
+            color.1,
+            color.2,
+            alpha,
+        );
     }
 }
 
@@ -348,10 +506,12 @@ fn rounded_corner_alpha(px: i32, py: i32, w: i32, h: i32, radius: i32) -> f32 {
 }
 
 unsafe fn blend_pixel(dst: *mut u8, r: u8, g: u8, b: u8, a: u8) {
-    if a == 0 { return; }
+    if a == 0 {
+        return;
+    }
     let alpha = a as f32 / 255.0;
     let inv = 1.0 - alpha;
-    *dst = (b as f32 * alpha + *dst as f32 * inv) as u8;       // B
+    *dst = (b as f32 * alpha + *dst as f32 * inv) as u8; // B
     *dst.add(1) = (g as f32 * alpha + *dst.add(1) as f32 * inv) as u8; // G
     *dst.add(2) = (r as f32 * alpha + *dst.add(2) as f32 * inv) as u8; // R
     *dst.add(3) = (a as f32 + *dst.add(3) as f32 * inv).min(255.0) as u8; // A
@@ -380,7 +540,10 @@ unsafe fn fix_text_alpha(pixels: *mut u8, buf_w: i32, buf_h: i32, rect: &RECT) {
 unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32, x: i32, y: i32) {
     let dst = POINT { x, y };
     let src = POINT { x: 0, y: 0 };
-    let size = SIZE { cx: width, cy: height };
+    let size = SIZE {
+        cx: width,
+        cy: height,
+    };
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
@@ -388,8 +551,15 @@ unsafe fn commit_layered(hwnd: HWND, mem_dc: HDC, width: i32, height: i32, x: i3
         AlphaFormat: AC_SRC_ALPHA as u8,
     };
     let _ = UpdateLayeredWindow(
-        hwnd, None, Some(&dst), Some(&size), mem_dc, Some(&src),
-        COLORREF(0), Some(&blend), ULW_ALPHA,
+        hwnd,
+        None,
+        Some(&dst),
+        Some(&size),
+        mem_dc,
+        Some(&src),
+        COLORREF(0),
+        Some(&blend),
+        ULW_ALPHA,
     );
 }
 
