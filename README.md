@@ -35,7 +35,7 @@ And it won't fight your recorder for RAM — under 2 MB binary when it's on back
 | 🔍 | **Magnifier** | Press `3` to zoom into the area under cursor. Scroll to adjust zoom. |
 | 🖥️ | **Under 2 MB** | Rust native binary. No runtime, no Electron, no installer bloat. |
 
-## Quick Start
+## Quick Start/
 
 ```powershell
 irm https://raw.githubusercontent.com/WodenJay/HoldRect/main/install.ps1 | iex

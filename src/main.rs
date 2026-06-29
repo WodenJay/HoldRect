@@ -1,16 +1,18 @@
 #![windows_subsystem = "windows"]
 
-mod config;
 #[cfg(windows)]
 mod autostart;
-mod state;
-mod overlay;
-mod tray;
-mod popup;
-mod mem_report;
+mod config;
 #[cfg(windows)]
 mod hook;
 mod magnifier;
+mod mem_report;
+mod overlay;
+mod popup;
+#[cfg(windows)]
+mod single_instance;
+mod state;
+mod tray;
 
 use std::sync::mpsc;
 use std::thread;
@@ -31,6 +33,19 @@ fn main() {
         crate::mem_report::print_mem_report();
         return;
     }
+
+    // Single instance check - must be before any GUI initialization
+    // Keep mutex handle alive to prevent premature release
+    #[cfg(windows)]
+    let _mutex_handle = match crate::single_instance::try_acquire() {
+        crate::single_instance::SingleInstance::First(handle) => {
+            crate::single_instance::show_started();
+            handle // Keep handle alive
+        }
+        crate::single_instance::SingleInstance::AlreadyRunning => {
+            crate::single_instance::show_already_running_and_exit();
+        }
+    };
 
     #[cfg(windows)]
     set_dpi_awareness();
@@ -60,7 +75,14 @@ fn main() {
         std::process::exit(0);
     });
 
-    run_overlay(event_loop, input_rx, config_rx, config.border_width, config.color_mode, config.modifier_name.clone());
+    run_overlay(
+        event_loop,
+        input_rx,
+        config_rx,
+        config.border_width,
+        config.color_mode,
+        config.modifier_name.clone(),
+    );
     std::process::exit(0);
 }
 

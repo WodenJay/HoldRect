@@ -20,7 +20,14 @@ fn run_key() -> Result<HKEY, windows::core::Error> {
     let subkey = HSTRING::from(RUN_KEY);
     let mut hkey = HKEY::default();
     unsafe {
-        RegOpenKeyExW(HKEY_CURRENT_USER, &subkey, 0u32, KEY_READ | KEY_WRITE, &mut hkey).ok()?;
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            &subkey,
+            0u32,
+            KEY_READ | KEY_WRITE,
+            &mut hkey,
+        )
+        .ok()?;
     }
     Ok(hkey)
 }
@@ -33,7 +40,9 @@ pub fn is_autostart_enabled() -> bool {
     };
     let value_name = HSTRING::from(VALUE_NAME);
     let result = unsafe { RegQueryValueExW(hkey, &value_name, None, None, None, None) };
-    unsafe { let _ = RegCloseKey(hkey); }
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    }
     result.is_ok()
 }
 
@@ -48,10 +57,11 @@ pub fn set_autostart(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
-            let wide_bytes = unsafe {
-                std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2)
-            };
-            unsafe { RegSetValueExW(hkey, &value_name, 0u32, REG_SZ, Some(wide_bytes)).ok()?; }
+            let wide_bytes =
+                unsafe { std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2) };
+            unsafe {
+                RegSetValueExW(hkey, &value_name, 0u32, REG_SZ, Some(wide_bytes)).ok()?;
+            }
         } else {
             let del_result = unsafe { RegDeleteValueW(hkey, &value_name) }.ok();
             match del_result {
@@ -62,7 +72,9 @@ pub fn set_autostart(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(())
     })();
-    unsafe { let _ = RegCloseKey(hkey); }
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    }
     result
 }
 
@@ -90,7 +102,10 @@ mod tests {
         let _g = test_mutex().lock().unwrap();
         set_autostart(true).unwrap();
         set_autostart(false).unwrap();
-        assert!(!is_autostart_enabled(), "should be disabled after set(false)");
+        assert!(
+            !is_autostart_enabled(),
+            "should be disabled after set(false)"
+        );
     }
 
     #[test]
@@ -98,7 +113,10 @@ mod tests {
         let _g = test_mutex().lock().unwrap();
         set_autostart(true).unwrap();
         set_autostart(true).unwrap();
-        assert!(is_autostart_enabled(), "double enable should still be enabled");
+        assert!(
+            is_autostart_enabled(),
+            "double enable should still be enabled"
+        );
     }
 
     #[test]
@@ -106,7 +124,10 @@ mod tests {
         let _g = test_mutex().lock().unwrap();
         set_autostart(false).unwrap();
         set_autostart(false).unwrap();
-        assert!(!is_autostart_enabled(), "double disable should still be disabled");
+        assert!(
+            !is_autostart_enabled(),
+            "double disable should still be disabled"
+        );
     }
 
     #[test]
@@ -114,7 +135,11 @@ mod tests {
         // No registry mutation — no mutex needed, but lock for hygiene
         let _g = test_mutex().lock().unwrap();
         let path = quoted_exe_path();
-        assert!(path.starts_with('"'), "path should start with quote: {}", path);
+        assert!(
+            path.starts_with('"'),
+            "path should start with quote: {}",
+            path
+        );
         assert!(path.ends_with('"'), "path should end with quote: {}", path);
     }
 
@@ -133,6 +158,6 @@ mod tests {
         let _g = test_mutex().lock().unwrap();
         set_autostart(false).unwrap();
         set_autostart(false).unwrap(); // already absent
-        // Should not panic or return error
+                                       // Should not panic or return error
     }
 }

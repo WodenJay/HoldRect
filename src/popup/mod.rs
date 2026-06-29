@@ -2,8 +2,8 @@ pub mod animation;
 #[cfg(windows)]
 pub mod gdi_renderer;
 
-use std::time::Instant;
 use crate::state::{AppState, InputEvent};
+use std::time::Instant;
 
 const SLIDE_IN_DURATION_MS: u64 = 350;
 const HOLD_DURATION_MS: u64 = 1000;
@@ -76,7 +76,11 @@ impl PopupManager {
                     return;
                 }
                 if state.magnifier_active
-                    && matches!(state.drawing, crate::state::DrawingState::Armed | crate::state::DrawingState::Drawing { .. })
+                    && matches!(
+                        state.drawing,
+                        crate::state::DrawingState::Armed
+                            | crate::state::DrawingState::Drawing { .. }
+                    )
                 {
                     self.show_status("Magnifier");
                 }
@@ -86,7 +90,10 @@ impl PopupManager {
                 if self.content == PopupContent::Cheatsheet && self.phase != PopupPhase::Hidden {
                     return;
                 }
-                if matches!(state.drawing, crate::state::DrawingState::Armed | crate::state::DrawingState::Drawing { .. }) {
+                if matches!(
+                    state.drawing,
+                    crate::state::DrawingState::Armed | crate::state::DrawingState::Drawing { .. }
+                ) {
                     let text = build_status_text(state.pinned_active, state.spotlight_active);
                     self.show_status(&text);
                 }
@@ -106,7 +113,10 @@ impl PopupManager {
         match &self.phase {
             PopupPhase::Hidden => {
                 self.content = PopupContent::Status;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y: START_Y_OFFSET };
+                self.phase = PopupPhase::SlidingIn {
+                    started_at: Instant::now(),
+                    from_y: START_Y_OFFSET,
+                };
             }
             PopupPhase::SlidingIn { .. } => {
                 // Keep sliding-in animation, just update text — don't snap to Holding
@@ -114,13 +124,18 @@ impl PopupManager {
             }
             PopupPhase::Holding { .. } => {
                 self.content = PopupContent::Status;
-                self.phase = PopupPhase::Holding { started_at: Instant::now() };
+                self.phase = PopupPhase::Holding {
+                    started_at: Instant::now(),
+                };
             }
             PopupPhase::SlidingOut { .. } => {
                 // Reverse: restart slide-in from current position
                 self.content = PopupContent::Status;
                 let from_y = self.current_y_offset();
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y };
+                self.phase = PopupPhase::SlidingIn {
+                    started_at: Instant::now(),
+                    from_y,
+                };
             }
         }
     }
@@ -129,7 +144,10 @@ impl PopupManager {
         match &self.phase {
             PopupPhase::Hidden => {
                 self.content = PopupContent::Cheatsheet;
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y: START_Y_OFFSET };
+                self.phase = PopupPhase::SlidingIn {
+                    started_at: Instant::now(),
+                    from_y: START_Y_OFFSET,
+                };
             }
             PopupPhase::SlidingIn { .. } | PopupPhase::Holding { .. } => {
                 // Already showing — no-op for cheatsheet
@@ -138,12 +156,17 @@ impl PopupManager {
                 }
                 // Status popup active — replace with cheatsheet
                 self.content = PopupContent::Cheatsheet;
-                self.phase = PopupPhase::Holding { started_at: Instant::now() };
+                self.phase = PopupPhase::Holding {
+                    started_at: Instant::now(),
+                };
             }
             PopupPhase::SlidingOut { .. } => {
                 self.content = PopupContent::Cheatsheet;
                 let from_y = self.current_y_offset();
-                self.phase = PopupPhase::SlidingIn { started_at: Instant::now(), from_y };
+                self.phase = PopupPhase::SlidingIn {
+                    started_at: Instant::now(),
+                    from_y,
+                };
             }
         }
     }
@@ -155,7 +178,10 @@ impl PopupManager {
         match &self.phase {
             PopupPhase::SlidingIn { .. } | PopupPhase::Holding { .. } => {
                 let from_y = self.current_y_offset();
-                self.phase = PopupPhase::SlidingOut { started_at: Instant::now(), from_y };
+                self.phase = PopupPhase::SlidingOut {
+                    started_at: Instant::now(),
+                    from_y,
+                };
             }
             _ => {}
         }
@@ -178,7 +204,10 @@ impl PopupManager {
                     None // cheatsheet has no hold timer
                 } else if elapsed >= HOLD_DURATION_MS {
                     let from_y = self.current_y_offset();
-                    Some(PopupPhase::SlidingOut { started_at: now, from_y })
+                    Some(PopupPhase::SlidingOut {
+                        started_at: now,
+                        from_y,
+                    })
                 } else {
                     None
                 }
@@ -236,12 +265,24 @@ impl PopupManager {
             PopupPhase::Hidden => START_Y_OFFSET,
             PopupPhase::SlidingIn { started_at, from_y } => {
                 let t = started_at.elapsed().as_secs_f64();
-                animation::spring_position(t, *from_y, TARGET_Y_OFFSET, SLIDE_IN_OMEGA, SLIDE_IN_ZETA)
+                animation::spring_position(
+                    t,
+                    *from_y,
+                    TARGET_Y_OFFSET,
+                    SLIDE_IN_OMEGA,
+                    SLIDE_IN_ZETA,
+                )
             }
             PopupPhase::Holding { .. } => TARGET_Y_OFFSET,
             PopupPhase::SlidingOut { started_at, from_y } => {
                 let t = started_at.elapsed().as_secs_f64();
-                animation::spring_position(t, *from_y, START_Y_OFFSET, SLIDE_OUT_OMEGA, SLIDE_OUT_ZETA)
+                animation::spring_position(
+                    t,
+                    *from_y,
+                    START_Y_OFFSET,
+                    SLIDE_OUT_OMEGA,
+                    SLIDE_OUT_ZETA,
+                )
             }
         }
     }
@@ -257,7 +298,10 @@ mod tests {
     }
 
     fn armed_state() -> AppState {
-        AppState { drawing: DrawingState::Armed, ..Default::default() }
+        AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        }
     }
 
     // --- build_status_text ---
@@ -313,7 +357,9 @@ mod tests {
         let mut m = make_manager();
         m.show_status("Pinned");
         // Fast-forward to Holding
-        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() - std::time::Duration::from_millis(2000) };
+        m.phase = PopupPhase::Holding {
+            started_at: std::time::Instant::now() - std::time::Duration::from_millis(2000),
+        };
         m.tick(); // -> SlidingOut
         assert!(matches!(m.phase, PopupPhase::SlidingOut { .. }));
         m.show_status("Spotlight");
@@ -326,7 +372,10 @@ mod tests {
     fn tick_sliding_in_to_holding_after_duration() {
         let mut m = make_manager();
         m.show_status("Pinned");
-        m.phase = PopupPhase::SlidingIn { started_at: std::time::Instant::now() - std::time::Duration::from_millis(500), from_y: START_Y_OFFSET };
+        m.phase = PopupPhase::SlidingIn {
+            started_at: std::time::Instant::now() - std::time::Duration::from_millis(500),
+            from_y: START_Y_OFFSET,
+        };
         m.tick();
         assert!(matches!(m.phase, PopupPhase::Holding { .. }));
     }
@@ -334,7 +383,9 @@ mod tests {
     #[test]
     fn tick_holding_to_sliding_out_after_duration() {
         let mut m = make_manager();
-        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() - std::time::Duration::from_millis(1100) };
+        m.phase = PopupPhase::Holding {
+            started_at: std::time::Instant::now() - std::time::Duration::from_millis(1100),
+        };
         m.tick();
         assert!(matches!(m.phase, PopupPhase::SlidingOut { .. }));
     }
@@ -342,7 +393,10 @@ mod tests {
     #[test]
     fn tick_sliding_out_to_hidden_after_duration() {
         let mut m = make_manager();
-        m.phase = PopupPhase::SlidingOut { started_at: std::time::Instant::now() - std::time::Duration::from_millis(400), from_y: 0.0 };
+        m.phase = PopupPhase::SlidingOut {
+            started_at: std::time::Instant::now() - std::time::Duration::from_millis(400),
+            from_y: 0.0,
+        };
         m.tick();
         assert_eq!(m.phase, PopupPhase::Hidden);
     }
@@ -370,7 +424,9 @@ mod tests {
     fn hide_cheatsheet_triggers_sliding_out() {
         let mut m = make_manager();
         m.show_cheatsheet();
-        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() };
+        m.phase = PopupPhase::Holding {
+            started_at: std::time::Instant::now(),
+        };
         m.hide_cheatsheet();
         assert!(matches!(m.phase, PopupPhase::SlidingOut { .. }));
     }
@@ -388,7 +444,9 @@ mod tests {
     fn cheatsheet_no_hold_timer() {
         let mut m = make_manager();
         m.show_cheatsheet();
-        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() - std::time::Duration::from_millis(5000) };
+        m.phase = PopupPhase::Holding {
+            started_at: std::time::Instant::now() - std::time::Duration::from_millis(5000),
+        };
         m.tick();
         // Should still be Holding (no auto-dismiss for cheatsheet)
         assert!(matches!(m.phase, PopupPhase::Holding { .. }));
@@ -474,7 +532,9 @@ mod tests {
         let state = armed_state();
         m.on_event(&InputEvent::ToggleHelp, &state);
         assert!(m.needs_frame());
-        m.phase = PopupPhase::Holding { started_at: std::time::Instant::now() };
+        m.phase = PopupPhase::Holding {
+            started_at: std::time::Instant::now(),
+        };
         m.on_event(&InputEvent::HideHelp, &state);
         assert!(matches!(m.phase, PopupPhase::SlidingOut { .. }));
     }
@@ -484,7 +544,10 @@ mod tests {
     #[test]
     fn on_digit_pressed_idle_is_noop() {
         let mut m = make_manager();
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         m.on_event(&InputEvent::DigitPressed(1), &state);
         assert_eq!(m.phase, PopupPhase::Hidden);
     }

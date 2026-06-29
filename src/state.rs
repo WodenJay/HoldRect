@@ -7,10 +7,10 @@ pub enum InputEvent {
     MouseMove { x: i32, y: i32 },
     DigitPressed(u8),
     EscapePressed,
-    ToggleHelp,   // modifier + ` pressed
-    HideHelp,     // modifier or ` released
-    ScrollUp,     // magnifier zoom in
-    ScrollDown,   // magnifier zoom out
+    ToggleHelp, // modifier + ` pressed
+    HideHelp,   // modifier or ` released
+    ScrollUp,   // magnifier zoom in
+    ScrollDown, // magnifier zoom out
 }
 
 /// Drawing states
@@ -21,7 +21,10 @@ pub enum DrawingState {
     /// Ctrl held, waiting for mouse action, overlay hidden
     Armed,
     /// Mouse dragging, overlay visible, rendering rectangle
-    Drawing { start: (i32, i32), current: (i32, i32) },
+    Drawing {
+        start: (i32, i32),
+        current: (i32, i32),
+    },
 }
 
 /// A pinned rectangle with per-rect flags
@@ -68,89 +71,201 @@ pub(crate) fn normalize_rect(start: (i32, i32), current: (i32, i32)) -> (i32, i3
 
 /// Pure state transition function. No side effects.
 pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
-    let (drawing, pinned_active, spotlight_active, magnifier_active, zoom_level, pinned_rects) = match (&state.drawing, event) {
-        // --- DigitPressed(1) toggle (only in Armed or Drawing, i.e. modifier held) ---
-        (DrawingState::Armed, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(1)) => {
-            (state.drawing.clone(), !state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
+    let (drawing, pinned_active, spotlight_active, magnifier_active, zoom_level, pinned_rects) =
+        match (&state.drawing, event) {
+            // --- DigitPressed(1) toggle (only in Armed or Drawing, i.e. modifier held) ---
+            (DrawingState::Armed, InputEvent::DigitPressed(1)) => (
+                state.drawing.clone(),
+                !state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            (DrawingState::Drawing { .. }, InputEvent::DigitPressed(1)) => (
+                state.drawing.clone(),
+                !state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
 
-        // --- DigitPressed(2) spotlight toggle (only in Armed or Drawing) ---
-        (DrawingState::Armed, InputEvent::DigitPressed(2)) => {
-            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(2)) => {
-            (state.drawing.clone(), state.pinned_active, !state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
+            // --- DigitPressed(2) spotlight toggle (only in Armed or Drawing) ---
+            (DrawingState::Armed, InputEvent::DigitPressed(2)) => (
+                state.drawing.clone(),
+                state.pinned_active,
+                !state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            (DrawingState::Drawing { .. }, InputEvent::DigitPressed(2)) => (
+                state.drawing.clone(),
+                state.pinned_active,
+                !state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
 
-        // --- EscapePressed: clear all pinned rects and reset flags ---
-        (_, InputEvent::EscapePressed) => {
-            let drawing = match &state.drawing {
-                DrawingState::Drawing { .. } => DrawingState::Armed,
-                other => other.clone(),
-            };
-            (drawing, false, false, false, state.zoom_level, Vec::new())
-        }
-
-        // --- Existing transitions (pinned_active/pinned_rects unchanged unless noted) ---
-
-        // Idle -> Armed on modifier press
-        (DrawingState::Idle, InputEvent::ModifierChanged { pressed: true }) => {
-            (DrawingState::Armed, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        // Armed -> Drawing on mouse down
-        (DrawingState::Armed, InputEvent::MouseButtonDown { x, y }) => {
-            (DrawingState::Drawing { start: (*x, *y), current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        // Drawing: update current position on mouse move
-        (DrawingState::Drawing { start, .. }, InputEvent::MouseMove { x, y }) => {
-            (DrawingState::Drawing { start: *start, current: (*x, *y) }, state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        // Drawing -> Armed on mouse up
-        (DrawingState::Drawing { start, .. }, InputEvent::MouseButtonUp { x, y }) => {
-            let final_current = (*x, *y);
-            let mut rects = state.pinned_rects.clone();
-            if state.pinned_active {
-                let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
-                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
+            // --- EscapePressed: clear all pinned rects and reset flags ---
+            (_, InputEvent::EscapePressed) => {
+                let drawing = match &state.drawing {
+                    DrawingState::Drawing { .. } => DrawingState::Armed,
+                    other => other.clone(),
+                };
+                (drawing, false, false, false, state.zoom_level, Vec::new())
             }
-            (DrawingState::Armed, false, false, state.magnifier_active, state.zoom_level, rects)
-        }
-        // Armed -> Idle on modifier release
-        (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => {
-            (DrawingState::Idle, false, false, false, state.zoom_level, state.pinned_rects.clone())
-        }
-        // Drawing -> Idle on modifier release
-        (DrawingState::Drawing { start, current }, InputEvent::ModifierChanged { pressed: false }) => {
-            let mut rects = state.pinned_rects.clone();
-            if state.pinned_active {
-                let (x0, y0, x1, y1) = normalize_rect(*start, *current);
-                rects.push(PinnedRect { x0, y0, x1, y1, spotlight: state.spotlight_active });
+
+            // --- Existing transitions (pinned_active/pinned_rects unchanged unless noted) ---
+
+            // Idle -> Armed on modifier press
+            (DrawingState::Idle, InputEvent::ModifierChanged { pressed: true }) => (
+                DrawingState::Armed,
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            // Armed -> Drawing on mouse down
+            (DrawingState::Armed, InputEvent::MouseButtonDown { x, y }) => (
+                DrawingState::Drawing {
+                    start: (*x, *y),
+                    current: (*x, *y),
+                },
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            // Drawing: update current position on mouse move
+            (DrawingState::Drawing { start, .. }, InputEvent::MouseMove { x, y }) => (
+                DrawingState::Drawing {
+                    start: *start,
+                    current: (*x, *y),
+                },
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            // Drawing -> Armed on mouse up
+            (DrawingState::Drawing { start, .. }, InputEvent::MouseButtonUp { x, y }) => {
+                let final_current = (*x, *y);
+                let mut rects = state.pinned_rects.clone();
+                if state.pinned_active {
+                    let (x0, y0, x1, y1) = normalize_rect(*start, final_current);
+                    rects.push(PinnedRect {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        spotlight: state.spotlight_active,
+                    });
+                }
+                (
+                    DrawingState::Armed,
+                    false,
+                    false,
+                    state.magnifier_active,
+                    state.zoom_level,
+                    rects,
+                )
             }
-            (DrawingState::Idle, false, false, false, state.zoom_level, rects)
-        }
-        // --- DigitPressed(3) magnifier toggle (only in Armed or Drawing) ---
-        (DrawingState::Armed, InputEvent::DigitPressed(3)) => {
-            (state.drawing.clone(), state.pinned_active, state.spotlight_active, !state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
-        (DrawingState::Drawing { .. }, InputEvent::DigitPressed(3)) => {
-            (state.drawing.clone(), state.pinned_active, state.spotlight_active, !state.magnifier_active, state.zoom_level, state.pinned_rects.clone())
-        }
+            // Armed -> Idle on modifier release
+            // magnifier_active persists (toggle mode)
+            (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => (
+                DrawingState::Idle,
+                false,
+                false,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            // Drawing -> Idle on modifier release
+            // magnifier_active persists (toggle mode)
+            (
+                DrawingState::Drawing { start, current },
+                InputEvent::ModifierChanged { pressed: false },
+            ) => {
+                let mut rects = state.pinned_rects.clone();
+                if state.pinned_active {
+                    let (x0, y0, x1, y1) = normalize_rect(*start, *current);
+                    rects.push(PinnedRect {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        spotlight: state.spotlight_active,
+                    });
+                }
+                (
+                    DrawingState::Idle,
+                    false,
+                    false,
+                    state.magnifier_active,
+                    state.zoom_level,
+                    rects,
+                )
+            }
+            // --- DigitPressed(3) magnifier toggle (only in Armed or Drawing) ---
+            (DrawingState::Armed, InputEvent::DigitPressed(3)) => (
+                state.drawing.clone(),
+                state.pinned_active,
+                state.spotlight_active,
+                !state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+            (DrawingState::Drawing { .. }, InputEvent::DigitPressed(3)) => (
+                state.drawing.clone(),
+                state.pinned_active,
+                state.spotlight_active,
+                !state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
 
-        // --- ScrollUp/ScrollDown zoom adjustment ---
-        (_, InputEvent::ScrollUp) if state.magnifier_active => {
-            (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, (state.zoom_level + 0.5).min(8.0), state.pinned_rects.clone())
-        }
-        (_, InputEvent::ScrollDown) if state.magnifier_active => {
-            (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, (state.zoom_level - 0.5).max(1.5), state.pinned_rects.clone())
-        }
+            // --- ScrollUp/ScrollDown zoom adjustment ---
+            (_, InputEvent::ScrollUp) if state.magnifier_active => (
+                state.drawing.clone(),
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                (state.zoom_level + 0.5).min(8.0),
+                state.pinned_rects.clone(),
+            ),
+            (_, InputEvent::ScrollDown) if state.magnifier_active => (
+                state.drawing.clone(),
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                (state.zoom_level - 0.5).max(1.5),
+                state.pinned_rects.clone(),
+            ),
 
-        // All other combinations: no state change
-        _ => (state.drawing.clone(), state.pinned_active, state.spotlight_active, state.magnifier_active, state.zoom_level, state.pinned_rects.clone()),
-    };
-    AppState { drawing, pinned_rects, pinned_active, spotlight_active, magnifier_active, zoom_level }
+            // All other combinations: no state change
+            _ => (
+                state.drawing.clone(),
+                state.pinned_active,
+                state.spotlight_active,
+                state.magnifier_active,
+                state.zoom_level,
+                state.pinned_rects.clone(),
+            ),
+        };
+    AppState {
+        drawing,
+        pinned_rects,
+        pinned_active,
+        spotlight_active,
+        magnifier_active,
+        zoom_level,
+    }
 }
 
 #[cfg(test)]
@@ -161,38 +276,56 @@ mod tests {
 
     #[test]
     fn idle_modifier_down_transitions_to_armed() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
 
     #[test]
     fn armed_mouse_down_transitions_to_drawing() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 200 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (100, 200), current: (100, 200) }
+            DrawingState::Drawing {
+                start: (100, 200),
+                current: (100, 200)
+            }
         );
     }
 
     #[test]
     fn drawing_mouse_move_updates_current() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (10, 20) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (10, 20),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseMove { x: 50, y: 80 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (50, 80) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
         );
     }
 
     #[test]
     fn drawing_mouse_up_transitions_to_armed() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
@@ -201,7 +334,10 @@ mod tests {
 
     #[test]
     fn armed_modifier_up_transitions_to_idle() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
@@ -209,7 +345,10 @@ mod tests {
     #[test]
     fn drawing_modifier_up_transitions_to_idle() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
@@ -220,28 +359,40 @@ mod tests {
 
     #[test]
     fn idle_mouse_down_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn idle_mouse_move_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseMove { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn idle_modifier_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn armed_mouse_move_is_noop() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseMove { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
@@ -249,26 +400,38 @@ mod tests {
     #[test]
     fn drawing_mouse_down_is_noop() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 99, y: 99 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (50, 80) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
         );
     }
 
     #[test]
     fn drawing_modifier_down_is_noop() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (50, 80) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
         );
     }
 
@@ -276,14 +439,20 @@ mod tests {
 
     #[test]
     fn idle_mouse_button_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
     fn armed_mouse_button_up_is_noop() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
         assert_eq!(next.drawing, DrawingState::Armed);
     }
@@ -292,53 +461,95 @@ mod tests {
 
     #[test]
     fn drawing_with_negative_coordinates() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: -1920, y: -1080 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (-1920, -1080), current: (-1920, -1080) }
+            DrawingState::Drawing {
+                start: (-1920, -1080),
+                current: (-1920, -1080)
+            }
         );
         let next = process_event(&next, &InputEvent::MouseMove { x: -100, y: -200 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (-1920, -1080), current: (-100, -200) }
+            DrawingState::Drawing {
+                start: (-1920, -1080),
+                current: (-100, -200)
+            }
         );
     }
 
     #[test]
     fn drawing_with_i32_boundary_values() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
-        let next = process_event(&state, &InputEvent::MouseButtonDown { x: i32::MAX, y: i32::MIN });
-        assert_eq!(
-            next.drawing,
-            DrawingState::Drawing { start: (i32::MAX, i32::MIN), current: (i32::MAX, i32::MIN) }
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
+        let next = process_event(
+            &state,
+            &InputEvent::MouseButtonDown {
+                x: i32::MAX,
+                y: i32::MIN,
+            },
         );
-        let next = process_event(&next, &InputEvent::MouseMove { x: i32::MIN, y: i32::MAX });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (i32::MAX, i32::MIN), current: (i32::MIN, i32::MAX) }
+            DrawingState::Drawing {
+                start: (i32::MAX, i32::MIN),
+                current: (i32::MAX, i32::MIN)
+            }
+        );
+        let next = process_event(
+            &next,
+            &InputEvent::MouseMove {
+                x: i32::MIN,
+                y: i32::MAX,
+            },
+        );
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing {
+                start: (i32::MAX, i32::MIN),
+                current: (i32::MIN, i32::MAX)
+            }
         );
     }
 
     #[test]
     fn drawing_at_origin() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::MouseButtonDown { x: 0, y: 0 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (0, 0), current: (0, 0) }
+            DrawingState::Drawing {
+                start: (0, 0),
+                current: (0, 0)
+            }
         );
         let next = process_event(&next, &InputEvent::MouseMove { x: 0, y: 0 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (0, 0), current: (0, 0) }
+            DrawingState::Drawing {
+                start: (0, 0),
+                current: (0, 0)
+            }
         );
     }
 
     #[test]
     fn drawing_zero_size_mouse_up_returns_to_armed() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (100, 200), current: (100, 200) },
+            drawing: DrawingState::Drawing {
+                start: (100, 200),
+                current: (100, 200),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 100, y: 200 });
@@ -350,39 +561,66 @@ mod tests {
     #[test]
     fn multiple_mouse_moves_preserve_start() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (10, 20) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (10, 20),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseMove { x: 30, y: 40 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (30, 40) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (30, 40)
+            }
         );
         let next = process_event(&next, &InputEvent::MouseMove { x: 60, y: 80 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (60, 80) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (60, 80)
+            }
         );
         let next = process_event(&next, &InputEvent::MouseMove { x: 5, y: 5 });
         assert_eq!(
             next.drawing,
-            DrawingState::Drawing { start: (10, 20), current: (5, 5) }
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (5, 5)
+            }
         );
     }
 
     #[test]
     fn full_draw_lifecycle() {
-        let mut state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let mut state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
 
         state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(state.drawing, DrawingState::Armed);
 
         state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
-        assert_eq!(state.drawing, DrawingState::Drawing { start: (100, 100), current: (100, 100) });
+        assert_eq!(
+            state.drawing,
+            DrawingState::Drawing {
+                start: (100, 100),
+                current: (100, 100)
+            }
+        );
 
         state = process_event(&state, &InputEvent::MouseMove { x: 200, y: 150 });
         state = process_event(&state, &InputEvent::MouseMove { x: 300, y: 250 });
-        assert_eq!(state.drawing, DrawingState::Drawing { start: (100, 100), current: (300, 250) });
+        assert_eq!(
+            state.drawing,
+            DrawingState::Drawing {
+                start: (100, 100),
+                current: (300, 250)
+            }
+        );
 
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 300, y: 250 });
         assert_eq!(state.drawing, DrawingState::Armed);
@@ -393,7 +631,10 @@ mod tests {
 
     #[test]
     fn modifier_repress_after_release() {
-        let mut state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let mut state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
 
         state = process_event(&state, &InputEvent::ModifierChanged { pressed: true });
         assert_eq!(state.drawing, DrawingState::Armed);
@@ -430,12 +671,21 @@ mod tests {
     #[test]
     fn app_state_clone_independence() {
         let original = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (30, 40) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (30, 40),
+            },
             ..Default::default()
         };
         let mut cloned = original.clone();
         cloned.drawing = DrawingState::Idle;
-        assert_eq!(original.drawing, DrawingState::Drawing { start: (10, 20), current: (30, 40) });
+        assert_eq!(
+            original.drawing,
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (30, 40)
+            }
+        );
         assert_eq!(cloned.drawing, DrawingState::Idle);
     }
 
@@ -450,7 +700,10 @@ mod tests {
 
     #[test]
     fn armed_digit_1_toggles_pinned_active() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         assert!(next.pinned_active);
         assert_eq!(next.drawing, DrawingState::Armed);
@@ -458,7 +711,11 @@ mod tests {
 
     #[test]
     fn armed_digit_1_toggle_off() {
-        let state = AppState { drawing: DrawingState::Armed, pinned_active: true, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            pinned_active: true,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         assert!(!next.pinned_active);
     }
@@ -466,17 +723,29 @@ mod tests {
     #[test]
     fn drawing_digit_1_toggles_pinned_active() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         assert!(next.pinned_active);
-        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
+        );
     }
 
     #[test]
     fn idle_digit_1_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         assert!(!next.pinned_active);
         assert_eq!(next.drawing, DrawingState::Idle);
@@ -484,7 +753,10 @@ mod tests {
 
     #[test]
     fn digit_2_does_not_toggle_pinned_but_toggles_spotlight() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(!next.pinned_active, "digit 2 must not affect pinned_active");
         assert!(next.spotlight_active, "digit 2 toggles spotlight_active on");
@@ -495,31 +767,58 @@ mod tests {
     #[test]
     fn drawing_mouse_up_pinned_pushes_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
         assert_eq!(next.drawing, DrawingState::Armed);
-        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
+        assert_eq!(
+            next.pinned_rects,
+            vec![PinnedRect {
+                x0: 10,
+                y0: 20,
+                x1: 50,
+                y1: 80,
+                spotlight: false
+            }]
+        );
         assert!(!next.pinned_active, "pinned_active resets after mouse up");
     }
 
     #[test]
     fn drawing_mouse_up_pinned_normalizes_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (50, 80), current: (10, 20) },
+            drawing: DrawingState::Drawing {
+                start: (50, 80),
+                current: (10, 20),
+            },
             pinned_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 10, y: 20 });
-        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
+        assert_eq!(
+            next.pinned_rects,
+            vec![PinnedRect {
+                x0: 10,
+                y0: 20,
+                x1: 50,
+                y1: 80,
+                spotlight: false
+            }]
+        );
     }
 
     #[test]
     fn drawing_mouse_up_not_pinned_clears_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: false,
             ..Default::default()
         };
@@ -531,14 +830,23 @@ mod tests {
     #[test]
     fn spotlight_active_without_pinned_does_not_push_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             spotlight_active: true,
             pinned_active: false,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
-        assert!(next.pinned_rects.is_empty(), "spotlight without pinned must not push a rect");
-        assert!(!next.spotlight_active, "spotlight_active resets after mouse up");
+        assert!(
+            next.pinned_rects.is_empty(),
+            "spotlight without pinned must not push a rect"
+        );
+        assert!(
+            !next.spotlight_active,
+            "spotlight_active resets after mouse up"
+        );
     }
 
     // --- Pinned mode: multiple rects accumulate ---
@@ -552,14 +860,32 @@ mod tests {
         state = process_event(&state, &InputEvent::MouseButtonDown { x: 10, y: 10 });
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 50 });
         assert_eq!(state.pinned_rects.len(), 1);
-        assert_eq!(state.pinned_rects[0], PinnedRect { x0: 10, y0: 10, x1: 50, y1: 50, spotlight: false });
+        assert_eq!(
+            state.pinned_rects[0],
+            PinnedRect {
+                x0: 10,
+                y0: 10,
+                x1: 50,
+                y1: 50,
+                spotlight: false
+            }
+        );
 
         // Second rect: still modifier held, draw another (pinned_active reset, need to toggle again)
         state = process_event(&state, &InputEvent::DigitPressed(1));
         state = process_event(&state, &InputEvent::MouseButtonDown { x: 100, y: 100 });
         state = process_event(&state, &InputEvent::MouseButtonUp { x: 200, y: 200 });
         assert_eq!(state.pinned_rects.len(), 2);
-        assert_eq!(state.pinned_rects[1], PinnedRect { x0: 100, y0: 100, x1: 200, y1: 200, spotlight: false });
+        assert_eq!(
+            state.pinned_rects[1],
+            PinnedRect {
+                x0: 100,
+                y0: 100,
+                x1: 200,
+                y1: 200,
+                spotlight: false
+            }
+        );
     }
 
     // --- Pinned mode: per-rect reset ---
@@ -567,7 +893,10 @@ mod tests {
     #[test]
     fn pinned_active_resets_after_mouse_up() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             ..Default::default()
         };
@@ -581,7 +910,22 @@ mod tests {
     fn escape_clears_pinned_rects() {
         let state = AppState {
             drawing: DrawingState::Armed,
-            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }, PinnedRect { x0: 100, y0: 100, x1: 200, y1: 200, spotlight: false }],
+            pinned_rects: vec![
+                PinnedRect {
+                    x0: 10,
+                    y0: 20,
+                    x1: 50,
+                    y1: 80,
+                    spotlight: false,
+                },
+                PinnedRect {
+                    x0: 100,
+                    y0: 100,
+                    x1: 200,
+                    y1: 200,
+                    spotlight: false,
+                },
+            ],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -592,8 +936,17 @@ mod tests {
     #[test]
     fn escape_during_draw_cancels_and_clears_pinned() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
-            pinned_rects: vec![PinnedRect { x0: 0, y0: 0, x1: 100, y1: 100, spotlight: false }],
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
+            pinned_rects: vec![PinnedRect {
+                x0: 0,
+                y0: 0,
+                x1: 100,
+                y1: 100,
+                spotlight: false,
+            }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -606,7 +959,13 @@ mod tests {
     fn escape_in_idle_clears_pinned_rects() {
         let state = AppState {
             drawing: DrawingState::Idle,
-            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }],
+            pinned_rects: vec![PinnedRect {
+                x0: 10,
+                y0: 20,
+                x1: 50,
+                y1: 80,
+                spotlight: false,
+            }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -631,12 +990,24 @@ mod tests {
     #[test]
     fn drawing_modifier_release_with_pinned_pushes_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert_eq!(next.pinned_rects, vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: false }]);
+        assert_eq!(
+            next.pinned_rects,
+            vec![PinnedRect {
+                x0: 10,
+                y0: 20,
+                x1: 50,
+                y1: 80,
+                spotlight: false
+            }]
+        );
         assert!(!next.pinned_active);
         assert_eq!(next.drawing, DrawingState::Idle);
     }
@@ -645,7 +1016,10 @@ mod tests {
 
     #[test]
     fn armed_digit_2_toggles_spotlight_active() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(next.spotlight_active);
         assert_eq!(next.drawing, DrawingState::Armed);
@@ -653,7 +1027,11 @@ mod tests {
 
     #[test]
     fn armed_digit_2_toggle_off() {
-        let state = AppState { drawing: DrawingState::Armed, spotlight_active: true, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            spotlight_active: true,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(!next.spotlight_active);
     }
@@ -661,17 +1039,29 @@ mod tests {
     #[test]
     fn drawing_digit_2_toggles_spotlight_active() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(next.spotlight_active);
-        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
+        );
     }
 
     #[test]
     fn idle_digit_2_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(!next.spotlight_active);
         assert_eq!(next.drawing, DrawingState::Idle);
@@ -682,7 +1072,10 @@ mod tests {
     #[test]
     fn drawing_mouse_up_pinned_spotlight_pushes_rect_with_spotlight_true() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             spotlight_active: true,
             ..Default::default()
@@ -690,13 +1083,19 @@ mod tests {
         let next = process_event(&state, &InputEvent::MouseButtonUp { x: 50, y: 80 });
         assert_eq!(next.pinned_rects.len(), 1);
         assert!(next.pinned_rects[0].spotlight);
-        assert!(!next.spotlight_active, "spotlight_active resets after mouse up");
+        assert!(
+            !next.spotlight_active,
+            "spotlight_active resets after mouse up"
+        );
     }
 
     #[test]
     fn drawing_mouse_up_pinned_no_spotlight_pushes_spotlight_false() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             spotlight_active: false,
             ..Default::default()
@@ -709,7 +1108,10 @@ mod tests {
     #[test]
     fn spotlight_active_resets_after_mouse_up() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             spotlight_active: true,
             ..Default::default()
         };
@@ -721,7 +1123,10 @@ mod tests {
 
     #[test]
     fn pinned_and_spotlight_independent() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         let next = process_event(&next, &InputEvent::DigitPressed(2));
         assert!(next.pinned_active);
@@ -730,14 +1135,20 @@ mod tests {
 
     #[test]
     fn digit_1_does_not_affect_spotlight() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         assert!(!next.spotlight_active);
     }
 
     #[test]
     fn digit_2_does_not_affect_pinned() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         assert!(!next.pinned_active);
     }
@@ -749,7 +1160,13 @@ mod tests {
         let state = AppState {
             drawing: DrawingState::Armed,
             spotlight_active: true,
-            pinned_rects: vec![PinnedRect { x0: 10, y0: 20, x1: 50, y1: 80, spotlight: true }],
+            pinned_rects: vec![PinnedRect {
+                x0: 10,
+                y0: 20,
+                x1: 50,
+                y1: 80,
+                spotlight: true,
+            }],
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::EscapePressed);
@@ -774,7 +1191,10 @@ mod tests {
     #[test]
     fn drawing_modifier_release_with_pinned_spotlight_pushes_rect() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             pinned_active: true,
             spotlight_active: true,
             ..Default::default()
@@ -834,7 +1254,10 @@ mod tests {
 
     #[test]
     fn armed_digit_3_toggles_magnifier_active() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(3));
         assert!(next.magnifier_active);
         assert_eq!(next.drawing, DrawingState::Armed);
@@ -842,7 +1265,11 @@ mod tests {
 
     #[test]
     fn armed_digit_3_toggle_off() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(3));
         assert!(!next.magnifier_active);
     }
@@ -850,17 +1277,29 @@ mod tests {
     #[test]
     fn drawing_digit_3_toggles_magnifier_active() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::DigitPressed(3));
         assert!(next.magnifier_active);
-        assert_eq!(next.drawing, DrawingState::Drawing { start: (10, 20), current: (50, 80) });
+        assert_eq!(
+            next.drawing,
+            DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80)
+            }
+        );
     }
 
     #[test]
     fn idle_digit_3_is_noop() {
-        let state = AppState { drawing: DrawingState::Idle, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(3));
         assert!(!next.magnifier_active);
         assert_eq!(next.drawing, DrawingState::Idle);
@@ -870,35 +1309,60 @@ mod tests {
 
     #[test]
     fn magnifier_scroll_up_increases_zoom() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 2.0, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 2.0,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ScrollUp);
         assert!((next.zoom_level - 2.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn magnifier_scroll_down_decreases_zoom() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 2.0, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 2.0,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ScrollDown);
         assert!((next.zoom_level - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn magnifier_zoom_clamped_at_8_0() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 8.0, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 8.0,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ScrollUp);
         assert!((next.zoom_level - 8.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn magnifier_zoom_clamped_at_1_5() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: true, zoom_level: 1.5, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: true,
+            zoom_level: 1.5,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ScrollDown);
         assert!((next.zoom_level - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn scroll_without_magnifier_active_is_noop() {
-        let state = AppState { drawing: DrawingState::Armed, magnifier_active: false, zoom_level: 2.0, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            magnifier_active: false,
+            zoom_level: 2.0,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::ScrollUp);
         assert!((next.zoom_level - 2.0).abs() < f64::EPSILON);
         assert!(!next.magnifier_active);
@@ -922,7 +1386,10 @@ mod tests {
 
     #[test]
     fn magnifier_and_pinned_independent() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(1));
         let next = process_event(&next, &InputEvent::DigitPressed(3));
         assert!(next.pinned_active);
@@ -931,36 +1398,42 @@ mod tests {
 
     #[test]
     fn magnifier_and_spotlight_independent() {
-        let state = AppState { drawing: DrawingState::Armed, ..Default::default() };
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            ..Default::default()
+        };
         let next = process_event(&state, &InputEvent::DigitPressed(2));
         let next = process_event(&next, &InputEvent::DigitPressed(3));
         assert!(next.spotlight_active);
         assert!(next.magnifier_active);
     }
 
-    // --- Modifier release resets magnifier_active ---
+    // --- Modifier release preserves magnifier_active (toggle mode) ---
 
     #[test]
-    fn modifier_release_resets_magnifier_active() {
+    fn modifier_release_preserves_magnifier_active() {
         let state = AppState {
             drawing: DrawingState::Armed,
             magnifier_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(!next.magnifier_active);
+        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
-    fn drawing_modifier_release_resets_magnifier_active() {
+    fn drawing_modifier_release_preserves_magnifier_active() {
         let state = AppState {
-            drawing: DrawingState::Drawing { start: (10, 20), current: (50, 80) },
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (50, 80),
+            },
             magnifier_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(!next.magnifier_active);
+        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 }
