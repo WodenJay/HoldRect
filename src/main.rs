@@ -59,8 +59,12 @@ fn main() {
 
     // Start Win32 input hook listener (replaces rdev)
     let config = crate::config::AppConfig::load();
+    let hook_tx = input_tx.clone();
     #[cfg(windows)]
-    crate::hook::start_hook_listener(input_tx, proxy, config.modifier_vk_codes);
+    crate::hook::start_hook_listener(hook_tx, proxy, config.modifier_vk_codes);
+
+    // Send FirstLaunch event for welcome popup
+    let _ = input_tx.send(crate::state::InputEvent::FirstLaunch);
 
     // Spawn config file watcher thread for hot-reload
     let watch_dir = dirs::home_dir()
