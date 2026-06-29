@@ -1,5 +1,6 @@
 // Transparent overlay window + GDI rendering
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Receiver;
 
 use winit::application::ApplicationHandler;
@@ -24,6 +25,10 @@ use crate::state::process_event;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
+
+/// Registered Windows message ID for single-instance notification.
+/// Set once in `resumed()` via `RegisterWindowMessageW`.
+static ALREADY_RUNNING_MSG_ID: AtomicU32 = AtomicU32::new(0);
 
 const FLOW_SPEED: f32 = 0.1;
 
@@ -256,6 +261,11 @@ impl ApplicationHandler for App {
                 wparam: windows::Win32::Foundation::WPARAM,
                 lparam: windows::Win32::Foundation::LPARAM,
             ) -> windows::Win32::Foundation::LRESULT {
+                let registered_msg = ALREADY_RUNNING_MSG_ID.load(Ordering::Relaxed);
+                if registered_msg != 0 && msg == registered_msg {
+                    crate::hook::send_event(crate::state::InputEvent::InstanceAlreadyRunning);
+                    return windows::Win32::Foundation::LRESULT(0);
+                }
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
             let wc = WNDCLASSEXW {
@@ -267,6 +277,16 @@ impl ApplicationHandler for App {
             };
             unsafe {
                 RegisterClassExW(&wc);
+
+                // Register custom message for single-instance notification
+                {
+                    let msg_name: Vec<u16> = crate::single_instance::ALREADY_RUNNING_MSG_NAME
+                        .encode_utf16().chain(std::iter::once(0)).collect();
+                    let msg_id = RegisterWindowMessageW(windows::core::PCWSTR(msg_name.as_ptr()));
+                    if msg_id != 0 {
+                        ALREADY_RUNNING_MSG_ID.store(msg_id, Ordering::Relaxed);
+                    }
+                }
             }
 
             let popup_hwnd = unsafe {
@@ -347,6 +367,16 @@ impl ApplicationHandler for App {
             );
             // Route to popup manager
             self.popup_manager.on_event(&event, &self.state);
+            // Handle single-instance notification events
+            match &event {
+                InputEvent::FirstLaunch => {
+                    self.popup_manager.show_status("HoldRect started");
+                }
+                InputEvent::InstanceAlreadyRunning => {
+                    self.popup_manager.show_status("Already running");
+                }
+                _ => {}
+            }
             // Cache monitor rect when popup transitions from Hidden -> visible
             if was_hidden && self.popup_manager.needs_frame() {
                 #[cfg(windows)]
