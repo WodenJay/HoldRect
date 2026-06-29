@@ -37,13 +37,15 @@ fn main() {
     // Single instance check - must be before any GUI initialization
     // Keep mutex handle alive to prevent premature release
     #[cfg(windows)]
-    let _mutex_handle = match crate::single_instance::try_acquire() {
-        crate::single_instance::SingleInstance::First(handle) => {
-            crate::single_instance::show_started();
-            handle // Keep handle alive
+    let _mutex_handle: Option<windows::Win32::Foundation::HANDLE> = match crate::single_instance::try_acquire() {
+        Ok(crate::single_instance::SingleInstance::First(handle)) => Some(handle),
+        Ok(crate::single_instance::SingleInstance::AlreadyRunning) => {
+            crate::single_instance::notify_existing_instance();
+            std::process::exit(0);
         }
-        crate::single_instance::SingleInstance::AlreadyRunning => {
-            crate::single_instance::show_already_running_and_exit();
+        Err(e) => {
+            eprintln!("HoldRect: single-instance check failed: {e}, continuing anyway");
+            None
         }
     };
 
