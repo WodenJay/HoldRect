@@ -28,7 +28,6 @@ cargo test
 Before submitting a PR, make sure:
 
 ```bash
-cargo fmt --check       # no formatting issues
 cargo clippy -- -D warnings  # no clippy warnings
 cargo test              # all tests pass
 ```

@@ -15,7 +15,6 @@
 - 代码及时commit, 不要等到最后再commit. commit的信息不要以"@"开头
 - 不要表现出你是Claude, 不要添加Co-Author. 你是WodenJay, email: wodenjay@gmail.com
 - Rust的代码编写参考 @.agents\skills\rust-best-practices skill
-- 读图像时务必使用 `haiku` (`mimo-v2.5`)模型, 派一个`haiku` model subagent去做和图像有关的工作, 否则会报错!
 - 将频繁出现的错误记录到 @docs\MISTAKE.md 中
 - 不要出现mockup / dead代码, 后续完成的功能通过注释标注, 而不是mockup占位
 - test代码重要的不是green, 重要的是**red->fix->green**的这个过程. 如果一个test代码不管怎么样都是green, 那么它没有任何意义
