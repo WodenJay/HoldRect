@@ -58,6 +58,17 @@ pub fn update_modifier_codes(new_codes: Vec<u32>) {
         .expect("MODIFIER_CODES RwLock poisoned") = new_codes;
 }
 
+/// Send an InputEvent from outside the hook thread (e.g., from a WndProc).
+/// Used for forwarding custom Windows messages to the main event loop.
+pub(crate) fn send_event(event: InputEvent) {
+    if let Some(tx) = TX.get() {
+        let _ = tx.send(event);
+    }
+    if let Some(proxy) = PROXY.get() {
+        let _ = proxy.send_event(());
+    }
+}
+
 unsafe extern "system" fn keyboard_hook_proc(
     n_code: i32,
     w_param: WPARAM,
