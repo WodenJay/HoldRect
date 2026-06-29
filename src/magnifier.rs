@@ -28,6 +28,7 @@ pub struct MagnifierWindow {
     host_hwnd: HWND,
     mag_hwnd: HWND,
     diameter: i32,
+    visible: bool,
 }
 
 #[cfg(windows)]
@@ -103,6 +104,7 @@ impl MagnifierWindow {
                 host_hwnd,
                 mag_hwnd,
                 diameter,
+                visible: false,
             }
         }
     }
@@ -201,11 +203,12 @@ impl MagnifierWindow {
         }
     }
 
-    pub fn hide(&self) {
+    pub fn hide(&mut self) {
         use windows::Win32::UI::WindowsAndMessaging::*;
         unsafe {
             let _ = ShowWindow(self.host_hwnd, SW_HIDE);
         }
+        self.visible = false;
     }
 
     /// Update magnifier: position host window, repaint border, set source rect + zoom.
@@ -244,7 +247,16 @@ impl MagnifierWindow {
             let _ = MagSetWindowTransform(self.mag_hwnd, &mut transform);
             let _ = MagSetWindowSource(self.mag_hwnd, source_rect);
 
+            // Paint border BEFORE positioning to avoid showing stale/empty content
+            Self::paint_border(self.host_hwnd, d, color_mode, time_offset);
+
             // Position host window centered on cursor
+            // Use SWP_SHOWWINDOW only on first show to prevent flicker
+            let flags = if self.visible {
+                SWP_NOACTIVATE | SWP_NOSIZE
+            } else {
+                SWP_NOACTIVATE | SWP_SHOWWINDOW
+            };
             let _ = SetWindowPos(
                 self.host_hwnd,
                 HWND_TOPMOST,
@@ -252,13 +264,9 @@ impl MagnifierWindow {
                 cursor_pos.1 - r,
                 d,
                 d,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                flags,
             );
-
-            // Repaint border (UpdateLayeredWindow persists content, but we
-            // repaint each frame to support animated rainbow and ensure the
-            // border is never lost after window repositioning).
-            Self::paint_border(self.host_hwnd, d, color_mode, time_offset);
+            self.visible = true;
 
             // Trigger magnifier repaint
             let _ = InvalidateRect(self.mag_hwnd, None, false);

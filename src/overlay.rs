@@ -158,7 +158,7 @@ pub struct App {
 #[cfg(windows)]
 impl Drop for App {
     fn drop(&mut self) {
-        if let Some(mag) = &self.magnifier {
+        if let Some(mag) = &mut self.magnifier {
             mag.hide();
         }
         if let Some(hwnd) = self.popup_hwnd {
@@ -416,7 +416,7 @@ impl App {
                         time_offset,
                     );
                 }
-            } else if let Some(mag) = &self.magnifier {
+            } else if let Some(mag) = &mut self.magnifier {
                 mag.hide();
             }
         }
