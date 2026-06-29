@@ -9,8 +9,10 @@ pub enum InputEvent {
     EscapePressed,
     ToggleHelp, // modifier + ` pressed
     HideHelp,   // modifier or ` released
-    ScrollUp,   // magnifier zoom in
-    ScrollDown, // magnifier zoom out
+    ScrollUp,               // magnifier zoom in
+    ScrollDown,             // magnifier zoom out
+    FirstLaunch,            // first instance started
+    InstanceAlreadyRunning, // another instance tried to start
 }
 
 /// Drawing states
@@ -1441,5 +1443,29 @@ mod tests {
             "magnifier_active should persist after modifier release"
         );
         assert_eq!(next.drawing, DrawingState::Idle);
+    }
+
+    // --- Single-instance popup events: no-op in process_event ---
+
+    #[test]
+    fn first_launch_is_noop() {
+        let state = AppState {
+            drawing: DrawingState::Idle,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::FirstLaunch);
+        assert_eq!(next.drawing, DrawingState::Idle);
+        assert_eq!(next, state);
+    }
+
+    #[test]
+    fn instance_already_running_is_noop() {
+        let state = AppState {
+            drawing: DrawingState::Armed,
+            pinned_active: true,
+            ..Default::default()
+        };
+        let next = process_event(&state, &InputEvent::InstanceAlreadyRunning);
+        assert_eq!(next, state);
     }
 }
