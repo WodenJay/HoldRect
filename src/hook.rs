@@ -77,11 +77,16 @@ unsafe extern "system" fn keyboard_hook_proc(
             0x33 => 0x04,
             _ => 0,
         };
-        if digit_bit != 0 {
+        let is_digit_key = digit_bit != 0;
+        if is_digit_key {
             let bits = DIGIT_KEY_DOWN.load(Ordering::Relaxed);
             if is_key_down {
                 if bits & digit_bit != 0 {
-                    // Already held — skip repeat
+                    // Already held — skip repeat, but still suppress if modifier held
+                    let modifier_held = SHOULD_SUPPRESS.load(Ordering::Relaxed);
+                    if modifier_held {
+                        return LRESULT(1); // suppress repeat
+                    }
                     return CallNextHookEx(None, n_code, w_param, l_param);
                 }
                 DIGIT_KEY_DOWN.store(bits | digit_bit, Ordering::Relaxed);
@@ -105,11 +110,21 @@ unsafe extern "system" fn keyboard_hook_proc(
                 SHOULD_SUPPRESS.store(is_key_down, Ordering::Relaxed);
             }
             if let Some(tx) = TX.get() {
-                let _ = tx.send(event);
+                let _ = tx.send(event.clone());
             }
             if let Some(proxy) = PROXY.get() {
                 let _ = proxy.send_event(());
             }
+            // Suppress digit keys when modifier held (prevent input to other apps)
+            if matches!(&event, InputEvent::DigitPressed(_)) {
+                return LRESULT(1);
+            }
+        }
+
+        // Also suppress digit key up when modifier held (key down was suppressed,
+        // sending key up to other apps would cause state mismatch)
+        if modifier_held && is_digit_key && !is_key_down {
+            return LRESULT(1);
         }
     }
     CallNextHookEx(None, n_code, w_param, l_param)
