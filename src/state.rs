@@ -177,15 +177,17 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                 )
             }
             // Armed -> Idle on modifier release
+            // magnifier_active persists (toggle mode)
             (DrawingState::Armed, InputEvent::ModifierChanged { pressed: false }) => (
                 DrawingState::Idle,
                 false,
                 false,
-                false,
+                state.magnifier_active,
                 state.zoom_level,
                 state.pinned_rects.clone(),
             ),
             // Drawing -> Idle on modifier release
+            // magnifier_active persists (toggle mode)
             (
                 DrawingState::Drawing { start, current },
                 InputEvent::ModifierChanged { pressed: false },
@@ -205,7 +207,7 @@ pub fn process_event(state: &AppState, event: &InputEvent) -> AppState {
                     DrawingState::Idle,
                     false,
                     false,
-                    false,
+                    state.magnifier_active,
                     state.zoom_level,
                     rects,
                 )
@@ -1406,22 +1408,22 @@ mod tests {
         assert!(next.magnifier_active);
     }
 
-    // --- Modifier release resets magnifier_active ---
+    // --- Modifier release preserves magnifier_active (toggle mode) ---
 
     #[test]
-    fn modifier_release_resets_magnifier_active() {
+    fn modifier_release_preserves_magnifier_active() {
         let state = AppState {
             drawing: DrawingState::Armed,
             magnifier_active: true,
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(!next.magnifier_active);
+        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 
     #[test]
-    fn drawing_modifier_release_resets_magnifier_active() {
+    fn drawing_modifier_release_preserves_magnifier_active() {
         let state = AppState {
             drawing: DrawingState::Drawing {
                 start: (10, 20),
@@ -1431,7 +1433,7 @@ mod tests {
             ..Default::default()
         };
         let next = process_event(&state, &InputEvent::ModifierChanged { pressed: false });
-        assert!(!next.magnifier_active);
+        assert!(next.magnifier_active, "magnifier_active should persist after modifier release");
         assert_eq!(next.drawing, DrawingState::Idle);
     }
 }
