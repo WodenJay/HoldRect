@@ -115,6 +115,85 @@ fn parse_visual_command(args: &[String]) -> Result<CliCommand, CommandError> {
     }
 }
 
+pub const MAX_WIRE_BYTES: usize = 512;
+
+pub fn encode_request(command: &CliCommand) -> String {
+    match command {
+        CliCommand::Rect { x1, y1, x2, y2 } => {
+            format!("rect {x1} {y1} {x2} {y2}\n")
+        }
+        CliCommand::Magnifier { x, y, zoom } => {
+            format!("magnifier {x} {y} {zoom}\n")
+        }
+        CliCommand::Clear => "clear\n".to_owned(),
+    }
+}
+
+pub fn decode_request(bytes: &[u8]) -> Result<CliCommand, CommandError> {
+    let line = decode_line(bytes)?;
+    let args: Vec<String> = line
+        .split_ascii_whitespace()
+        .map(str::to_owned)
+        .collect();
+    match parse_startup_args(&args)? {
+        StartupMode::Client(command) => Ok(command),
+        _ => Err(CommandError::new(
+            "invalid_command",
+            "wire request must be a visual command",
+        )),
+    }
+}
+
+pub fn encode_response(result: &Result<(), CommandError>) -> String {
+    match result {
+        Ok(()) => "OK\n".to_owned(),
+        Err(error) => {
+            let message = error.message.replace('\r', " ").replace('\n', " ");
+            format!("ERR {} {}\n", error.code, message)
+        }
+    }
+}
+
+pub fn decode_response(bytes: &[u8]) -> Result<(), CommandError> {
+    let line = decode_line(bytes)?;
+    if line == "OK" {
+        return Ok(());
+    }
+    let mut parts = line.splitn(3, ' ');
+    if parts.next() != Some("ERR") {
+        return Err(CommandError::new("invalid_response", "unknown response"));
+    }
+    let code = parts
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CommandError::new("invalid_response", "missing error code"))?;
+    let message = parts
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CommandError::new("invalid_response", "missing error message"))?;
+    Err(CommandError::new(code, message))
+}
+
+fn decode_line(bytes: &[u8]) -> Result<&str, CommandError> {
+    if bytes.len() > MAX_WIRE_BYTES {
+        return Err(CommandError::new(
+            "request_too_large",
+            "wire frame exceeds 512 bytes",
+        ));
+    }
+    let body = bytes.strip_suffix(b"\n").ok_or_else(|| {
+        CommandError::new("invalid_frame", "wire frame must end with newline")
+    })?;
+    if body.contains(&b'\r') || body.contains(&b'\n') {
+        return Err(CommandError::new(
+            "invalid_frame",
+            "wire frame contains extra line break",
+        ));
+    }
+    std::str::from_utf8(body)
+        .map_err(|_| CommandError::new("invalid_utf8", "wire frame must be UTF-8"))
+}
+
 fn parse_i32(value: &str, name: &str) -> Result<i32, CommandError> {
     value.parse::<i32>().map_err(|_| {
         CommandError::new(
@@ -216,5 +295,62 @@ mod tests {
         for case in cases {
             assert!(parse_startup_args(&case).is_err(), "accepted {case:?}");
         }
+    }
+
+    #[test]
+    fn request_round_trips_every_command() {
+        let commands = [
+            CliCommand::Rect {
+                x1: -100,
+                y1: 20,
+                x2: 400,
+                y2: 500,
+            },
+            CliCommand::Magnifier {
+                x: 800,
+                y: 450,
+                zoom: 3.0,
+            },
+            CliCommand::Clear,
+        ];
+
+        for command in commands {
+            let encoded = encode_request(&command);
+            assert_eq!(decode_request(encoded.as_bytes()).unwrap(), command);
+        }
+    }
+
+    #[test]
+    fn response_round_trips_ok_and_error() {
+        let ok = encode_response(&Ok(()));
+        assert_eq!(decode_response(ok.as_bytes()), Ok(()));
+
+        let error = CommandError::new("invalid_rect", "outside desktop");
+        let encoded = encode_response(&Err(error.clone()));
+        assert_eq!(decode_response(encoded.as_bytes()), Err(error));
+    }
+
+    #[test]
+    fn wire_decoder_rejects_invalid_frames() {
+        let mut oversized = vec![b'x'; MAX_WIRE_BYTES + 1];
+        oversized[MAX_WIRE_BYTES] = b'\n';
+        let cases: Vec<Vec<u8>> = vec![
+            b"clear".to_vec(),
+            b"clear\nextra\n".to_vec(),
+            vec![0xff, b'\n'],
+            oversized,
+            b"rect 0 0 0 10\n".to_vec(),
+            b"clear extra\n".to_vec(),
+        ];
+
+        for case in cases {
+            assert!(decode_request(&case).is_err(), "accepted {case:?}");
+        }
+    }
+
+    #[test]
+    fn response_sanitizes_newlines() {
+        let encoded = encode_response(&Err(CommandError::new("bad", "line1\r\nline2")));
+        assert_eq!(encoded, "ERR bad line1  line2\n");
     }
 }
