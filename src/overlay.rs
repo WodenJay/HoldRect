@@ -592,6 +592,7 @@ impl App {
                     self.border_width,
                     &self.color_mode,
                     time_offset,
+                    255,
                 );
             }
 
@@ -608,6 +609,7 @@ impl App {
                     self.border_width,
                     &self.color_mode,
                     time_offset,
+                    255,
                 );
             }
 
@@ -858,6 +860,7 @@ fn draw_rect_in_dib(
     border_width: i32,
     color_mode: &ColorMode,
     time_offset: f32,
+    alpha: u8,
 ) {
     unsafe {
         let pixel_slice =
@@ -873,6 +876,7 @@ fn draw_rect_in_dib(
             border_width,
             color_mode,
             time_offset,
+            alpha,
         );
     }
 }
@@ -978,6 +982,7 @@ fn fill_border_pixels(
     border_width: i32,
     color_mode: &ColorMode,
     time_offset: f32,
+    alpha: u8,
 ) -> (usize, usize) {
     if width <= 0 || height <= 0 {
         return (0, 0);
@@ -995,15 +1000,24 @@ fn fill_border_pixels(
     let mut total_calls = 0usize;
 
     let set_pixel = |buf: &mut [u8], x: i32, y: i32, r: u8, g: u8, b: u8| {
-        if x < 0 || x >= width || y < 0 || y >= height {
+        if alpha == 0 || x < 0 || x >= width || y < 0 || y >= height {
             return false;
         }
         let offset = y as usize * stride + x as usize * 4;
         let was_zero = buf[offset + 3] == 0;
-        buf[offset] = b;
-        buf[offset + 1] = g;
-        buf[offset + 2] = r;
-        buf[offset + 3] = 255;
+        if alpha == 255 {
+            buf[offset..offset + 4].copy_from_slice(&[b, g, r, 255]);
+        } else {
+            let alpha = alpha as u32;
+            let inverse = 255 - alpha;
+            let blend = |source: u8, destination: u8| {
+                ((source as u32 * alpha + destination as u32 * inverse + 127) / 255) as u8
+            };
+            buf[offset] = blend(b, buf[offset]);
+            buf[offset + 1] = blend(g, buf[offset + 1]);
+            buf[offset + 2] = blend(r, buf[offset + 2]);
+            buf[offset + 3] = (alpha + (buf[offset + 3] as u32 * inverse + 127) / 255) as u8;
+        }
         was_zero
     };
 
@@ -1363,6 +1377,117 @@ mod tests {
         assert!((pos - 0.375).abs() < 0.001, "expected ~0.375, got {pos}");
     }
 
+    #[test]
+    fn fading_border_premultiplies_color_over_transparent_pixel() {
+        let mut buffer = vec![0u8; 4 * 4 * 4];
+
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 255, g: 0, b: 0 },
+            0.0,
+            128,
+        );
+
+        assert_eq!(&buffer[0..4], &[0, 0, 128, 128]);
+    }
+
+    #[test]
+    fn fading_border_uses_source_over_on_spotlight_mask() {
+        let mut buffer = vec![0u8; 4 * 4 * 4];
+        buffer[0..4].copy_from_slice(&[0, 0, 0, 160]);
+
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 255, g: 0, b: 0 },
+            0.0,
+            128,
+        );
+
+        assert_eq!(&buffer[0..4], &[0, 0, 128, 208]);
+    }
+
+    #[test]
+    fn opaque_pinned_or_active_border_replaces_fading_pixel() {
+        let mut buffer = vec![0u8; 4 * 4 * 4];
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 255, g: 0, b: 0 },
+            0.0,
+            128,
+        );
+
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 0, g: 0, b: 255 },
+            0.0,
+            255,
+        );
+
+        assert_eq!(&buffer[0..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn fading_borders_compose_oldest_to_newest() {
+        let mut buffer = vec![0u8; 4 * 4 * 4];
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 255, g: 0, b: 0 },
+            0.0,
+            128,
+        );
+
+        fill_border_pixels(
+            &mut buffer,
+            4,
+            4,
+            0,
+            0,
+            (0, 0),
+            (3, 3),
+            1,
+            &ColorMode::Solid { r: 0, g: 0, b: 255 },
+            0.0,
+            128,
+        );
+
+        assert_eq!(&buffer[0..4], &[128, 0, 64, 192]);
+    }
+
     // -- fill_border_pixels tests (Bug 1: DIB caching, Bug 2: corner double-write) --
 
     #[test]
@@ -1386,6 +1511,7 @@ mod tests {
             4,
             &color_mode,
             0.0,
+            255,
         );
         assert!(unique1 > 0, "first frame should draw pixels");
 
@@ -1404,6 +1530,7 @@ mod tests {
             4,
             &color_mode,
             0.0,
+            255,
         );
         assert!(
             unique2 > 0,
@@ -1455,6 +1582,7 @@ mod tests {
             border_width,
             &color_mode,
             0.0,
+            255,
         );
 
         let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
@@ -1496,6 +1624,7 @@ mod tests {
             border_width,
             &color_mode,
             0.0,
+            255,
         );
 
         let expected = expected_border_pixel_count(x0, y0, x1, y1, border_width);
@@ -1528,6 +1657,7 @@ mod tests {
             4,
             &color_mode,
             0.0,
+            255,
         );
 
         assert_eq!(unique, 0, "zero-area rect should write no pixels");
@@ -1558,6 +1688,7 @@ mod tests {
             2,
             &color_mode,
             0.0,
+            255,
         );
 
         assert!(unique > 0, "should draw pixels within window bounds");
@@ -1742,6 +1873,7 @@ mod tests {
                 4,
                 &color_mode,
                 0.0,
+                255,
             );
             assert_eq!(unique, 0);
             assert_eq!(total, 0);
@@ -1762,6 +1894,7 @@ mod tests {
                 4,
                 &color_mode,
                 0.0,
+                255,
             );
             assert_eq!(unique, 0);
             assert_eq!(total, 0);
@@ -1782,6 +1915,7 @@ mod tests {
                 1,
                 &color_mode,
                 0.0,
+                255,
             );
             let expected = expected_border_pixel_count(10, 10, 20, 20, 1);
             assert_eq!(
@@ -1806,6 +1940,7 @@ mod tests {
                 4,
                 &color_mode,
                 0.0,
+                255,
             );
             assert_eq!(unique, 0, "rect outside window should write nothing");
             assert!(
@@ -1829,6 +1964,7 @@ mod tests {
                 2,
                 &color_mode,
                 0.0,
+                255,
             );
             assert!(unique > 0, "partially visible rect should draw some pixels");
             let expected = expected_border_pixel_count(0, 0, 30, 30, 2);
@@ -1858,6 +1994,7 @@ mod tests {
                 2,
                 &color_mode,
                 0.0,
+                255,
             );
             assert!(
                 unique > 0,
@@ -1885,6 +2022,7 @@ mod tests {
                 2,
                 &ColorMode::Rainbow,
                 0.0,
+                255,
             );
             assert!(unique > 0, "rainbow mode should draw pixels");
             // Top-left corner pixel (10,10): perimeter pos ~0.0, hue ~0 (red)
@@ -1915,6 +2053,7 @@ mod tests {
                 2,
                 &ColorMode::Rainbow,
                 0.0,
+                255,
             );
             let (u1, _) = fill_border_pixels(
                 &mut buf1,
@@ -1927,6 +2066,7 @@ mod tests {
                 2,
                 &ColorMode::Rainbow,
                 0.5,
+                255,
             );
             assert_eq!(u0, u1, "same rect should write same number of pixels");
             let off = 10 * 100 * 4 + 10 * 4;
