@@ -75,6 +75,10 @@ fn update_fades_for_event(
     }
 }
 
+fn retain_active_fades(fades: &mut Vec<FadingRect>, now: Instant) {
+    fades.retain(|fade| now.saturating_duration_since(fade.started_at) < FADE_DURATION);
+}
+
 /// Cached DIB section for the overlay rendering. Allocated once and reused
 /// across frames; only recreated when the window dimensions change.
 #[cfg(windows)]
@@ -185,6 +189,7 @@ pub struct App {
     window: Option<Window>,
     state: AppState,
     input_rx: Receiver<InputEvent>,
+    fading_rects: Vec<FadingRect>,
     border_width: i32,
     color_mode: ColorMode,
     modifier_name: String,
@@ -229,6 +234,7 @@ impl App {
             window: None,
             state: AppState::default(),
             input_rx,
+            fading_rects: Vec::new(),
             border_width,
             color_mode,
             modifier_name: modifier_name.clone(),
@@ -400,6 +406,7 @@ impl ApplicationHandler for App {
 
         // Drain all pending input events
         while let Ok(event) = self.input_rx.try_recv() {
+            update_fades_for_event(&mut self.fading_rects, &self.state, &event, Instant::now());
             let new_state = process_event(&self.state, &event);
             let was_hidden = !self.popup_manager.needs_frame();
             self.state = new_state;
@@ -440,8 +447,10 @@ impl ApplicationHandler for App {
             }
         }
 
-        let needs_animation = matches!(&self.state.drawing, DrawingState::Drawing { .. })
-            || !self.state.pinned_rects.is_empty()
+        let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
+        let has_pinned = !self.state.pinned_rects.is_empty();
+        let has_fades = !self.fading_rects.is_empty();
+        let needs_animation = should_show_overlay(has_drawing, has_pinned, has_fades)
             || self.state.magnifier_active
             || self.popup_manager.needs_frame(); // keep event loop alive for popup animation
 
@@ -457,6 +466,9 @@ impl ApplicationHandler for App {
 
 impl App {
     fn render(&mut self) {
+        let now = Instant::now();
+        retain_active_fades(&mut self.fading_rects, now);
+
         let Some(window) = &self.window else {
             return;
         };
@@ -496,8 +508,9 @@ impl App {
 
         let has_drawing = matches!(&self.state.drawing, DrawingState::Drawing { .. });
         let has_pinned = !self.state.pinned_rects.is_empty();
+        let has_fades = !self.fading_rects.is_empty();
 
-        if !should_show_overlay(has_drawing, has_pinned) {
+        if !should_show_overlay(has_drawing, has_pinned, has_fades) {
             if self.overlay_shown {
                 #[cfg(windows)]
                 {
@@ -578,6 +591,23 @@ impl App {
 
             // Dim outside spotlight rects
             dim_outside_spotlights_in_dib(cache, width, height, &spotlight_rects, wr.left, wr.top);
+
+            // Draw fading rects oldest to newest over the Spotlight mask.
+            for fade in &self.fading_rects {
+                draw_rect_in_dib(
+                    cache,
+                    width,
+                    height,
+                    wr.left,
+                    wr.top,
+                    (fade.rect.0, fade.rect.1),
+                    (fade.rect.2, fade.rect.3),
+                    self.border_width,
+                    &self.color_mode,
+                    time_offset,
+                    fade_alpha(now.saturating_duration_since(fade.started_at)),
+                );
+            }
 
             // Draw all pinned rects
             for rect in &self.state.pinned_rects {
@@ -681,10 +711,10 @@ fn show_window_topmost(window: &Window) {
     }
 }
 
-/// Whether the overlay should be visible based on current drawing state.
+/// Whether the overlay should be visible based on its current content.
 /// Pure logic extracted from `render()` for testability.
-fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
-    has_drawing || has_pinned
+fn should_show_overlay(has_drawing: bool, has_pinned: bool, has_fades: bool) -> bool {
+    has_drawing || has_pinned || has_fades
 }
 
 /// Simulate multi-frame overlay state and return the number of times
@@ -694,7 +724,7 @@ fn should_show_overlay(has_drawing: bool, has_pinned: bool) -> bool {
 fn topmost_enforce_count(frames: &[(bool, bool)]) -> usize {
     let mut count = 0;
     for &(has_drawing, has_pinned) in frames {
-        if should_show_overlay(has_drawing, has_pinned) {
+        if should_show_overlay(has_drawing, has_pinned, false) {
             count += 1; // enforce topmost EVERY visible frame
         }
     }
@@ -1275,6 +1305,37 @@ mod tests {
         assert_eq!(fades.len(), 2);
         assert_eq!(fades[0].started_at, first);
         assert_eq!(fades[1].started_at, second);
+    }
+
+    #[test]
+    fn expired_fades_are_removed_at_supplied_frame_time() {
+        let first = Instant::now();
+        let second = first + Duration::from_millis(200);
+        let mut fades = vec![
+            FadingRect {
+                rect: (0, 0, 10, 10),
+                started_at: first,
+            },
+            FadingRect {
+                rect: (20, 20, 30, 30),
+                started_at: second,
+            },
+        ];
+
+        retain_active_fades(&mut fades, first + Duration::from_millis(301));
+
+        assert_eq!(fades.len(), 1);
+        assert_eq!(fades[0].started_at, second);
+    }
+
+    #[test]
+    fn app_starts_without_fades() {
+        let (_input_tx, input_rx) = std::sync::mpsc::channel();
+        let (_config_tx, config_rx) = std::sync::mpsc::channel();
+
+        let app = App::new(input_rx, config_rx, 4, ColorMode::Rainbow, "Alt".into());
+
+        assert!(app.fading_rects.is_empty());
     }
 
     #[test]
@@ -2681,28 +2742,33 @@ modifier = "Ctrl""#;
 
     #[test]
     fn overlay_hidden_when_no_content() {
-        assert!(!should_show_overlay(false, false));
+        assert!(!should_show_overlay(false, false, false));
+    }
+
+    #[test]
+    fn overlay_shown_when_only_fading() {
+        assert!(should_show_overlay(false, false, true));
     }
 
     #[test]
     fn overlay_shown_when_drawing() {
-        assert!(should_show_overlay(true, false));
+        assert!(should_show_overlay(true, false, false));
     }
 
     #[test]
     fn overlay_shown_when_pinned() {
-        assert!(should_show_overlay(false, true));
+        assert!(should_show_overlay(false, true, false));
     }
 
     #[test]
     fn overlay_shown_when_both() {
-        assert!(should_show_overlay(true, true));
+        assert!(should_show_overlay(true, true, false));
     }
 
     #[test]
     fn overlay_hidden_when_only_magnifier() {
         // Magnifier has its own window, should not trigger full-screen overlay
-        assert!(!should_show_overlay(false, false));
+        assert!(!should_show_overlay(false, false, false));
     }
 
     // -- topmost_enforce_count tests --
