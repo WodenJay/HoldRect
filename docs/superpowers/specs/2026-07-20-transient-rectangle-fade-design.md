@@ -36,15 +36,15 @@ A separate `FadeManager` abstraction is not needed. The collection has one owner
 
 For every input event:
 
-1. Read the pre-transition `DrawingState`, geometry, and `pinned_active` value.
+1. Capture the pre-transition `DrawingState` geometry and `pinned_active` value by value before `self.state` is replaced.
 2. Run the existing pure `process_event` transition.
-3. If that individual event ended a non-pinned drawing, append a `FadingRect`.
+3. If that individual event ended a non-pinned drawing, normalize its geometry and append a `FadingRect` only when both width and height are non-zero.
 
 The final geometry is selected as follows:
 
 - `MouseButtonUp { x, y }`: use the event's `(x, y)` as the final corner so the fade matches the actual release position.
 - `ModifierChanged { pressed: false }`: use the last `current` position stored by `DrawingState::Drawing`.
-- `EscapePressed`: do not create a fade.
+- `EscapePressed`: do not create a fade and immediately clear all ongoing fades, preserving Escape's clear/cancel semantics.
 
 Fade detection must happen per event rather than once around the entire drain loop. A batch can contain mouse movement, mouse-up, and modifier-release events, and the transition that ended the drawing must not be lost.
 
@@ -73,7 +73,7 @@ Expired entries are removed before overlay visibility and event-loop control-flo
 
 The existing border pixel pipeline gains an alpha input. Full-opacity pinned and active borders pass `255`; fading borders pass their calculated alpha.
 
-`UpdateLayeredWindow` with `AC_SRC_ALPHA` expects premultiplied color channels for translucent pixels. Fading border pixels therefore use premultiplied RGB and source-over composition rather than replacing destination RGBA values directly. This prevents a fading border from cutting a transparent seam through an existing Spotlight mask.
+`UpdateLayeredWindow` with `AC_SRC_ALPHA` expects premultiplied color channels for translucent pixels. Fading border pixels therefore use premultiplied RGB and source-over composition rather than replacing destination RGBA values directly. This prevents a fading border from cutting a transparent seam through an existing Spotlight mask. Source-over applies only to fading border writes; pinned and active borders remain direct opaque writes, and Spotlight mask generation remains unchanged.
 
 The DIB render order is:
 
@@ -90,8 +90,8 @@ Every fading rainbow border uses the current frame's existing `time_offset`; the
 
 A non-empty fade collection counts as visible overlay content and active animation:
 
-- `should_show_overlay` includes active fades;
-- the event loop continues using the existing 16 ms `WaitUntil` cadence while any fade remains;
+- `should_show_overlay` accepts fade presence and includes active fades in its result;
+- the event loop's `needs_animation` decision includes fade presence and continues using the existing 16 ms `WaitUntil` cadence while any fade remains;
 - the DIB and layered window stay alive while only fading borders are visible.
 
 After the last fade expires, if there is no active drawing and no pinned rectangle, the existing hide path submits a transparent frame, hides the overlay, and releases the DIB cache. No background timer or continuous animation remains active afterward.
@@ -105,7 +105,7 @@ Implementation follows red-green-refactor TDD. Tests are added before production
 - Mouse-up uses its final event coordinates.
 - Modifier release uses the last drawing coordinates.
 - Pinned completion creates no fade.
-- Escape creates no fade.
+- Escape creates no fade and clears all ongoing fades.
 - Idle/armed events create no fade.
 - Zero-width and zero-height rectangles create no fade.
 - Batched events are evaluated individually.
