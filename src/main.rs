@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod cli;
 #[cfg(windows)]
 mod autostart;
 mod config;
