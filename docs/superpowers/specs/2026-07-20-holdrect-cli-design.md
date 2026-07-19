@@ -49,9 +49,11 @@ Argument routing happens before the existing normal GUI initialization:
 4. No arguments enter normal resident mode and preserve the `FirstLaunch` popup.
 5. Unknown or malformed arguments return a usage error without starting the resident process.
 
+CLI client mode returns before the existing single-instance check. Only resident mode calls `try_acquire()` and holds the mutex as it does today.
+
 Client mode first attempts to connect to the resident command pipe. If the pipe does not exist, it spawns `current_exe()` with `--daemon` and retries until either the pipe becomes ready or five seconds elapse. The existing named mutex remains the authority for single-instance enforcement. Concurrent clients may race to spawn a daemon, but only one resident process survives; every client waits for the same pipe and sends its own command.
 
-The daemon spawned by a command remains a normal tray application after that command completes. It starts the input hook, configuration watcher, tray, overlay, and command server exactly once.
+The daemon spawned by a command remains a normal tray application after that command completes. It starts the input hook, configuration watcher, tray, overlay, and command server exactly once. If the spawning client later times out, it exits nonzero without terminating a daemon that may have started successfully.
 
 ## Command Model
 
@@ -65,11 +67,11 @@ CliCommand::Clear
 
 `src/cli.rs` owns this type, raw standard-library argument parsing, validation shared by client and server, and the small text wire format. No `clap`, serialization crate, or speculative command framework is introduced.
 
-A resident-only `CommandEnvelope` contains one `CliCommand` and an in-process reply sender. It is not part of the cross-process protocol. The envelope lets the pipe listener wait without blocking the UI thread and lets the event loop acknowledge the exact command after applying it.
+A resident-only `CommandEnvelope` contains one `CliCommand` and a single-use `std::sync::mpsc::Sender<Result<(), CommandError>>` created for that request. It is not part of the cross-process protocol. The envelope lets the pipe listener wait without blocking the UI thread and lets the event loop acknowledge the exact command after applying it.
 
 ## IPC Transport
 
-`src/ipc.rs` owns a Windows named-pipe client and server using the existing `windows` crate:
+`src/ipc.rs` owns a Windows named-pipe client and server using the existing `windows` crate. `Cargo.toml` enables the crate's required `Win32_System_Pipes` feature but adds no dependency:
 
 ```text
 \\.\pipe\HoldRect
@@ -104,6 +106,8 @@ The command channel remains separate from `InputEvent`. This avoids putting repl
 
 `App::about_to_wait` drains pending command envelopes on the event-loop thread. For each envelope it applies one command atomically, updates `hook::MAGNIFIER_ACTIVE` when necessary, and only then sends the reply. Commands preserve their own FIFO order. Exact ordering against physical input arriving at the same instant is unspecified; both are serialized by the event-loop thread without shared mutable state or locking.
 
+`App` also stores the current virtual-desktop bounds calculated in `resumed()`. Command application uses these cached physical-pixel bounds for resident-side geometry validation, so the CLI process does not need monitor APIs or duplicate DPI logic.
+
 ### Rectangle
 
 `rect` normalizes the two corners and appends one existing `PinnedRect` with `spotlight: false`. It does not toggle or consume the user's current `pinned_active` or `spotlight_active` flags and does not interrupt a manual drawing. Existing overlay rendering, rainbow animation, clipping, and multi-monitor offsets draw it without a new rendering path.
@@ -117,7 +121,7 @@ The command channel remains separate from `InputEvent`. This avoids putting repl
 
 The magnifier command sets the fixed position, activates the existing `AppState.magnifier_active`, and sets `zoom_level`. Rendering chooses the fixed position when present and otherwise calls `GetPhysicalCursorPos` as it does today.
 
-A later manual `DigitPressed(3)` clears the fixed position before applying the existing toggle transition. Turning the magnifier on manually therefore restores cursor-following behavior. Scroll-wheel zoom continues to update the shared zoom level while the magnifier is active.
+When `about_to_wait` processes a pending manual `DigitPressed(3)`, it clears `magnifier_position` before calling `process_event`. Turning the magnifier on manually therefore restores cursor-following behavior without moving this CLI-only field into the pure input state machine. Scroll-wheel zoom continues to update the shared zoom level while the magnifier is active.
 
 ### Clear
 
