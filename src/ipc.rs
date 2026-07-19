@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::time::Instant;
 use windows::core::{Error as WindowsError, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, HANDLE, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+    CloseHandle, GetLastError, HANDLE, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
     GENERIC_READ, GENERIC_WRITE, WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
@@ -203,6 +203,7 @@ fn remaining_millis(deadline: Instant) -> Result<u32, CommandError> {
 
 fn open_client(pipe_name: &str, deadline: Instant) -> Result<OwnedHandle, CommandError> {
     let name = wide(pipe_name);
+    let mut saw_busy = false;
     loop {
         let result = unsafe {
             CreateFileW(
@@ -217,30 +218,29 @@ fn open_client(pipe_name: &str, deadline: Instant) -> Result<OwnedHandle, Comman
         };
         match result {
             Ok(handle) => return Ok(OwnedHandle(handle)),
-            // ERROR_FILE_NOT_FOUND: pipe may be absent (never existed) or
-            // transiently gone between server instances. Retry briefly before
-            // concluding it is truly absent.
             Err(error) if same_win32_error(&error, ERROR_FILE_NOT_FOUND) => {
-                if remaining_millis(deadline).ok().filter(|ms| *ms > 40).is_some() {
-                    // Still have time; retry after a brief sleep.
+                if saw_busy {
+                    // Transient server-instance recreation; bounded retry.
+                    let _ = remaining_millis(deadline)?;
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
                 return Err(io_error("pipe_not_found", "HoldRect command pipe is not ready"));
             }
-            // ERROR_PIPE_BUSY or transient gaps between server instances:
-            // wait for the pipe to become available, then retry.
             Err(error) if same_win32_error(&error, ERROR_PIPE_BUSY) => {
-                // Check deadline before waiting.
+                saw_busy = true;
                 let wait_ms = remaining_millis(deadline)?;
                 unsafe {
-                    // WaitNamedPipeW waits up to wait_ms for a listening instance.
-                    // It may return FALSE if no instance exists yet (server is
-                    // between instances). We ignore the return and retry the loop.
-                    let _ = WaitNamedPipeW(PCWSTR(name.as_ptr()), wait_ms);
+                    let available = WaitNamedPipeW(PCWSTR(name.as_ptr()), wait_ms);
+                    if !available.as_bool() {
+                        let gle = GetLastError();
+                        if gle == ERROR_FILE_NOT_FOUND {
+                            // Server is between instances; retry.
+                            continue;
+                        }
+                        return Err(io_error("pipe_timeout", "timed out waiting for busy pipe"));
+                    }
                 }
-                // Loop back to CreateFileW; the deadline check at the top will
-                // catch a genuinely expired deadline or absent pipe.
             }
             Err(error) => return Err(io_error("pipe_open", error.to_string())),
         }
@@ -499,6 +499,24 @@ mod tests {
 
         let error = server.join().unwrap().unwrap_err();
         assert!(error.is_code("pipe_read"));
+    }
+
+    #[test]
+    fn absent_pipe_returns_immediately_without_retry() {
+        let start = Instant::now();
+        let error = send_command(
+            &unique_pipe(),
+            &CliCommand::Clear,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(error.is_code("pipe_not_found"));
+        // Must return immediately, not retry on ERROR_FILE_NOT_FOUND.
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "absent pipe retried for {}ms instead of returning immediately",
+            start.elapsed().as_millis()
+        );
     }
 
     #[test]
