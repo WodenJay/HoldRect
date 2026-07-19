@@ -3,6 +3,8 @@
 mod cli;
 #[cfg(windows)]
 mod autostart;
+#[cfg(windows)]
+mod ipc;
 mod config;
 #[cfg(windows)]
 mod hook;
