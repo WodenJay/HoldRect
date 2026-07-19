@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -31,6 +32,48 @@ use crate::state::InputEvent;
 static ALREADY_RUNNING_MSG_ID: AtomicU32 = AtomicU32::new(0);
 
 const FLOW_SPEED: f32 = 0.1;
+const FADE_DURATION: Duration = Duration::from_millis(300);
+
+#[derive(Debug, Clone, PartialEq)]
+struct FadingRect {
+    rect: (i32, i32, i32, i32),
+    started_at: Instant,
+}
+
+fn fade_alpha(elapsed: Duration) -> u8 {
+    let progress = (elapsed.as_secs_f32() / FADE_DURATION.as_secs_f32()).clamp(0.0, 1.0);
+    (255.0 * (1.0 - progress * progress)).round() as u8
+}
+
+fn update_fades_for_event(
+    fades: &mut Vec<FadingRect>,
+    state: &AppState,
+    event: &InputEvent,
+    now: Instant,
+) {
+    if matches!(event, InputEvent::EscapePressed) {
+        fades.clear();
+        return;
+    }
+    if state.pinned_active {
+        return;
+    }
+    let DrawingState::Drawing { start, current } = &state.drawing else {
+        return;
+    };
+    let end = match event {
+        InputEvent::MouseButtonUp { x, y } => (*x, *y),
+        InputEvent::ModifierChanged { pressed: false } => *current,
+        _ => return,
+    };
+    let rect = normalize_rect(*start, end);
+    if rect.0 < rect.2 && rect.1 < rect.3 {
+        fades.push(FadingRect {
+            rect,
+            started_at: now,
+        });
+    }
+}
 
 /// Cached DIB section for the overlay rendering. Allocated once and reused
 /// across frames; only recreated when the window dimensions change.
@@ -1042,6 +1085,183 @@ fn expected_border_pixel_count(x0: i32, y0: i32, x1: i32, y1: i32, border_width:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    fn drawing_state(start: (i32, i32), current: (i32, i32)) -> AppState {
+        AppState {
+            drawing: DrawingState::Drawing { start, current },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fade_alpha_uses_300ms_quadratic_curve() {
+        assert_eq!(fade_alpha(Duration::ZERO), 255);
+        assert_eq!(fade_alpha(Duration::from_millis(150)), 191);
+        assert_eq!(fade_alpha(Duration::from_millis(300)), 0);
+        assert_eq!(fade_alpha(Duration::from_millis(500)), 0);
+    }
+
+    #[test]
+    fn fade_alpha_is_monotonic() {
+        let samples =
+            [0, 50, 100, 150, 200, 250, 300].map(|ms| fade_alpha(Duration::from_millis(ms)));
+        assert!(samples.windows(2).all(|pair| pair[0] >= pair[1]));
+    }
+
+    #[test]
+    fn mouse_up_creates_transient_fade_at_release_position() {
+        let now = Instant::now();
+        let state = drawing_state((30, 40), (50, 60));
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &state,
+            &InputEvent::MouseButtonUp { x: 10, y: 20 },
+            now,
+        );
+
+        assert_eq!(
+            fades,
+            vec![FadingRect {
+                rect: (10, 20, 30, 40),
+                started_at: now,
+            }]
+        );
+    }
+
+    #[test]
+    fn modifier_release_creates_fade_at_last_current_position() {
+        let now = Instant::now();
+        let state = drawing_state((30, 40), (10, 20));
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &state,
+            &InputEvent::ModifierChanged { pressed: false },
+            now,
+        );
+
+        assert_eq!(fades[0].rect, (10, 20, 30, 40));
+        assert_eq!(fades[0].started_at, now);
+    }
+
+    #[test]
+    fn pinned_completion_does_not_create_fade() {
+        let mut state = drawing_state((10, 20), (30, 40));
+        state.pinned_active = true;
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &state,
+            &InputEvent::MouseButtonUp { x: 30, y: 40 },
+            Instant::now(),
+        );
+
+        assert!(fades.is_empty());
+    }
+
+    #[test]
+    fn escape_clears_all_fades_without_creating_one() {
+        let now = Instant::now();
+        let state = drawing_state((10, 20), (30, 40));
+        let mut fades = vec![FadingRect {
+            rect: (1, 2, 3, 4),
+            started_at: now,
+        }];
+
+        update_fades_for_event(&mut fades, &state, &InputEvent::EscapePressed, now);
+
+        assert!(fades.is_empty());
+    }
+
+    #[test]
+    fn zero_width_or_height_does_not_create_fade() {
+        let now = Instant::now();
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &drawing_state((10, 20), (10, 40)),
+            &InputEvent::ModifierChanged { pressed: false },
+            now,
+        );
+        update_fades_for_event(
+            &mut fades,
+            &drawing_state((10, 20), (30, 20)),
+            &InputEvent::ModifierChanged { pressed: false },
+            now,
+        );
+
+        assert!(fades.is_empty());
+    }
+
+    #[test]
+    fn idle_or_unrelated_events_do_not_create_fade() {
+        let now = Instant::now();
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &AppState::default(),
+            &InputEvent::MouseButtonUp { x: 30, y: 40 },
+            now,
+        );
+        update_fades_for_event(
+            &mut fades,
+            &drawing_state((10, 20), (30, 40)),
+            &InputEvent::MouseMove { x: 50, y: 60 },
+            now,
+        );
+
+        assert!(fades.is_empty());
+    }
+
+    #[test]
+    fn modifier_release_followed_by_mouse_up_creates_one_fade() {
+        let now = Instant::now();
+        let mut state = drawing_state((10, 20), (30, 40));
+        let mut fades = Vec::new();
+        let modifier_up = InputEvent::ModifierChanged { pressed: false };
+
+        update_fades_for_event(&mut fades, &state, &modifier_up, now);
+        state = process_event(&state, &modifier_up);
+        update_fades_for_event(
+            &mut fades,
+            &state,
+            &InputEvent::MouseButtonUp { x: 30, y: 40 },
+            now,
+        );
+
+        assert_eq!(fades.len(), 1);
+    }
+
+    #[test]
+    fn completed_drags_accumulate_independent_fades() {
+        let first = Instant::now();
+        let second = first + Duration::from_millis(50);
+        let mut fades = Vec::new();
+
+        update_fades_for_event(
+            &mut fades,
+            &drawing_state((0, 0), (10, 10)),
+            &InputEvent::MouseButtonUp { x: 10, y: 10 },
+            first,
+        );
+        update_fades_for_event(
+            &mut fades,
+            &drawing_state((20, 20), (30, 30)),
+            &InputEvent::MouseButtonUp { x: 30, y: 30 },
+            second,
+        );
+
+        assert_eq!(fades.len(), 2);
+        assert_eq!(fades[0].started_at, first);
+        assert_eq!(fades[1].started_at, second);
+    }
 
     #[test]
     fn normalize_rect_swaps_coordinates() {
