@@ -57,6 +57,7 @@ fn main() {
     let (input_tx, input_rx) = mpsc::channel::<InputEvent>();
     let (exit_tx, exit_rx) = mpsc::channel::<AppExit>();
     let (config_tx, config_rx) = mpsc::channel::<crate::config::AppConfig>();
+    let (_command_tx, command_rx) = mpsc::channel::<crate::cli::CommandEnvelope>();
 
     // Start Win32 input hook listener (replaces rdev)
     let config = crate::config::AppConfig::load();
@@ -86,6 +87,7 @@ fn main() {
         event_loop,
         input_rx,
         config_rx,
+        command_rx,
         config.border_width,
         config.color_mode,
         config.modifier_name.clone(),

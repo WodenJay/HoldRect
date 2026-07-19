@@ -21,11 +21,15 @@ use crate::config::ColorMode;
 #[cfg(windows)]
 use crate::popup::gdi_renderer::GdiRenderer;
 use crate::popup::PopupManager;
+use crate::cli::CliCommand;
+use crate::cli::CommandError;
+use crate::cli::CommandEnvelope;
 use crate::state::normalize_rect;
 use crate::state::process_event;
 use crate::state::AppState;
 use crate::state::DrawingState;
 use crate::state::InputEvent;
+use crate::state::PinnedRect;
 
 /// Registered Windows message ID for single-instance notification.
 /// Set once in `resumed()` via `RegisterWindowMessageW`.
@@ -77,6 +81,60 @@ fn update_fades_for_event(
 
 fn retain_active_fades(fades: &mut Vec<FadingRect>, now: Instant) {
     fades.retain(|fade| now.saturating_duration_since(fade.started_at) < FADE_DURATION);
+}
+
+fn clear_cli_magnifier_for_manual_event(
+    magnifier_position: &mut Option<(i32, i32)>,
+    event: &InputEvent,
+) {
+    if matches!(event, InputEvent::DigitPressed(3)) {
+        *magnifier_position = None;
+    }
+}
+
+fn apply_cli_command(
+    state: &mut AppState,
+    fades: &mut Vec<FadingRect>,
+    magnifier_position: &mut Option<(i32, i32)>,
+    desktop: (i32, i32, i32, i32),
+    command: &CliCommand,
+) -> Result<(), CommandError> {
+    let (left, top, right, bottom) = desktop;
+    match command {
+        CliCommand::Rect { x1, y1, x2, y2 } => {
+            let (x0, y0, x1, y1) = normalize_rect((*x1, *y1), (*x2, *y2));
+            if x1 <= left || x0 >= right || y1 <= top || y0 >= bottom {
+                return Err(CommandError::new(
+                    "outside_desktop",
+                    "rectangle does not intersect the virtual desktop",
+                ));
+            }
+            state.pinned_rects.push(PinnedRect {
+                x0,
+                y0,
+                x1,
+                y1,
+                spotlight: false,
+            });
+        }
+        CliCommand::Magnifier { x, y, zoom } => {
+            if *x < left || *x >= right || *y < top || *y >= bottom {
+                return Err(CommandError::new(
+                    "outside_desktop",
+                    "magnifier center is outside the virtual desktop",
+                ));
+            }
+            state.magnifier_active = true;
+            state.zoom_level = *zoom;
+            *magnifier_position = Some((*x, *y));
+        }
+        CliCommand::Clear => {
+            *state = process_event(state, &InputEvent::EscapePressed);
+            fades.clear();
+            *magnifier_position = None;
+        }
+    }
+    Ok(())
 }
 
 /// Cached DIB section for the overlay rendering. Allocated once and reused
@@ -194,6 +252,9 @@ pub struct App {
     color_mode: ColorMode,
     modifier_name: String,
     config_rx: Receiver<AppConfig>,
+    command_rx: Receiver<CommandEnvelope>,
+    magnifier_position: Option<(i32, i32)>,
+    virtual_desktop_rect: (i32, i32, i32, i32),
     #[cfg(windows)]
     dib_cache: Option<DibCache>,
     // Popup system
@@ -226,6 +287,7 @@ impl App {
     pub fn new(
         input_rx: Receiver<InputEvent>,
         config_rx: Receiver<AppConfig>,
+        command_rx: Receiver<CommandEnvelope>,
         border_width: i32,
         color_mode: ColorMode,
         modifier_name: String,
@@ -239,6 +301,9 @@ impl App {
             color_mode,
             modifier_name: modifier_name.clone(),
             config_rx,
+            command_rx,
+            magnifier_position: None,
+            virtual_desktop_rect: (0, 0, 1920, 1080),
             #[cfg(windows)]
             dib_cache: None,
             #[cfg(windows)]
@@ -273,6 +338,8 @@ impl ApplicationHandler for App {
             .map(|m| m.position().y + m.size().height as i32)
             .max()
             .unwrap_or(1080);
+
+        self.virtual_desktop_rect = (left, top, right, bottom);
 
         let attrs = Window::default_attributes()
             .with_title("HoldRect")
@@ -404,9 +471,26 @@ impl ApplicationHandler for App {
             crate::hook::update_modifier_codes(new_config.modifier_vk_codes);
         }
 
+        // Drain all pending CLI commands (applied before manual input)
+        while let Ok(envelope) = self.command_rx.try_recv() {
+            let result = apply_cli_command(
+                &mut self.state,
+                &mut self.fading_rects,
+                &mut self.magnifier_position,
+                self.virtual_desktop_rect,
+                &envelope.command,
+            );
+            crate::hook::MAGNIFIER_ACTIVE.store(
+                self.state.magnifier_active,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let _ = envelope.reply_tx.send(result);
+        }
+
         // Drain all pending input events
         while let Ok(event) = self.input_rx.try_recv() {
             update_fades_for_event(&mut self.fading_rects, &self.state, &event, Instant::now());
+            clear_cli_magnifier_for_manual_event(&mut self.magnifier_position, &event);
             let new_state = process_event(&self.state, &event);
             let was_hidden = !self.popup_manager.needs_frame();
             self.state = new_state;
@@ -489,18 +573,23 @@ impl App {
                         overlay_hwnd,
                     )
                 });
-                unsafe {
-                    let mut cursor_pos = windows::Win32::Foundation::POINT { x: 0, y: 0 };
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos(
-                        &mut cursor_pos,
-                    );
-                    mag.render(
-                        (cursor_pos.x, cursor_pos.y),
-                        self.state.zoom_level,
-                        &self.color_mode,
-                        time_offset,
-                    );
-                }
+                let cursor_pos = if let Some(position) = self.magnifier_position {
+                    position
+                } else {
+                    unsafe {
+                        let mut point = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+                        let _ = windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos(
+                            &mut point,
+                        );
+                        (point.x, point.y)
+                    }
+                };
+                mag.render(
+                    cursor_pos,
+                    self.state.zoom_level,
+                    &self.color_mode,
+                    time_offset,
+                );
             } else if let Some(mag) = &mut self.magnifier {
                 mag.hide();
             }
@@ -963,11 +1052,19 @@ pub fn run_overlay(
     event_loop: EventLoop<()>,
     input_rx: Receiver<InputEvent>,
     config_rx: Receiver<AppConfig>,
+    command_rx: Receiver<CommandEnvelope>,
     border_width: i32,
     color_mode: ColorMode,
     modifier_name: String,
 ) {
-    let mut app = App::new(input_rx, config_rx, border_width, color_mode, modifier_name);
+    let mut app = App::new(
+        input_rx,
+        config_rx,
+        command_rx,
+        border_width,
+        color_mode,
+        modifier_name,
+    );
     event_loop.run_app(&mut app).expect("Event loop error");
 }
 
@@ -1331,13 +1428,37 @@ mod tests {
     }
 
     #[test]
-    fn app_starts_without_fades() {
+    fn app_starts_without_cli_visual_state() {
         let (_input_tx, input_rx) = std::sync::mpsc::channel();
         let (_config_tx, config_rx) = std::sync::mpsc::channel();
+        let (_command_tx, command_rx) = std::sync::mpsc::channel();
 
-        let app = App::new(input_rx, config_rx, 4, ColorMode::Rainbow, "Alt".into());
+        let app = App::new(
+            input_rx,
+            config_rx,
+            command_rx,
+            4,
+            ColorMode::Rainbow,
+            "Alt".into(),
+        );
 
         assert!(app.fading_rects.is_empty());
+        assert_eq!(app.magnifier_position, None);
+        assert_eq!(app.virtual_desktop_rect, (0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn manual_digit_three_clears_cli_magnifier_position() {
+        let mut position = Some((800, 450));
+        clear_cli_magnifier_for_manual_event(&mut position, &InputEvent::DigitPressed(3));
+        assert_eq!(position, None);
+    }
+
+    #[test]
+    fn unrelated_input_preserves_cli_magnifier_position() {
+        let mut position = Some((800, 450));
+        clear_cli_magnifier_for_manual_event(&mut position, &InputEvent::MouseMove { x: 1, y: 2 });
+        assert_eq!(position, Some((800, 450)));
     }
 
     #[test]
@@ -2611,6 +2732,212 @@ modifier = "Ctrl""#;
                 dist
             );
         }
+    }
+
+    // --- CLI command application tests ---
+
+    fn apply_command(
+        state: &mut AppState,
+        fades: &mut Vec<FadingRect>,
+        magnifier_position: &mut Option<(i32, i32)>,
+        command: &CliCommand,
+    ) -> Result<(), CommandError> {
+        apply_cli_command(
+            state,
+            fades,
+            magnifier_position,
+            (-1920, 0, 1920, 1080),
+            command,
+        )
+    }
+
+    #[test]
+    fn cli_rect_normalizes_and_preserves_manual_flags() {
+        let mut state = AppState {
+            drawing: DrawingState::Drawing {
+                start: (1, 2),
+                current: (3, 4),
+            },
+            pinned_active: true,
+            spotlight_active: true,
+            ..Default::default()
+        };
+        let original_drawing = state.drawing.clone();
+        let mut fades = Vec::new();
+        let mut position = None;
+
+        apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Rect {
+                x1: 500,
+                y1: 400,
+                x2: 100,
+                y2: 200,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(state.drawing, original_drawing);
+        assert!(state.pinned_active);
+        assert!(state.spotlight_active);
+        assert_eq!(
+            state.pinned_rects.last().unwrap(),
+            &crate::state::PinnedRect {
+                x0: 100,
+                y0: 200,
+                x1: 500,
+                y1: 400,
+                spotlight: false,
+            }
+        );
+    }
+
+    #[test]
+    fn cli_rects_accumulate() {
+        let mut state = AppState::default();
+        let mut fades = Vec::new();
+        let mut position = None;
+        for x in [0, 100] {
+            apply_command(
+                &mut state,
+                &mut fades,
+                &mut position,
+                &CliCommand::Rect {
+                    x1: x,
+                    y1: 10,
+                    x2: x + 50,
+                    y2: 60,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(state.pinned_rects.len(), 2);
+    }
+
+    #[test]
+    fn cli_magnifier_sets_and_updates_one_fixed_position() {
+        let mut state = AppState::default();
+        let mut fades = Vec::new();
+        let mut position = None;
+
+        for (x, y, zoom) in [(100, 200, 2.0), (300, 400, 3.5)] {
+            apply_command(
+                &mut state,
+                &mut fades,
+                &mut position,
+                &CliCommand::Magnifier { x, y, zoom },
+            )
+            .unwrap();
+        }
+
+        assert!(state.magnifier_active);
+        assert_eq!(state.zoom_level, 3.5);
+        assert_eq!(position, Some((300, 400)));
+    }
+
+    #[test]
+    fn cli_clear_matches_escape_and_clears_fades_and_fixed_magnifier() {
+        let mut state = AppState {
+            drawing: DrawingState::Drawing {
+                start: (10, 20),
+                current: (30, 40),
+            },
+            pinned_active: true,
+            spotlight_active: true,
+            magnifier_active: true,
+            pinned_rects: vec![crate::state::PinnedRect {
+                x0: 0,
+                y0: 0,
+                x1: 100,
+                y1: 100,
+                spotlight: false,
+            }],
+            ..Default::default()
+        };
+        let mut fades = vec![FadingRect {
+            rect: (0, 0, 20, 20),
+            started_at: Instant::now(),
+        }];
+        let mut position = Some((50, 50));
+
+        apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Clear,
+        )
+        .unwrap();
+
+        assert_eq!(state.drawing, DrawingState::Armed);
+        assert!(state.pinned_rects.is_empty());
+        assert!(!state.pinned_active);
+        assert!(!state.spotlight_active);
+        assert!(!state.magnifier_active);
+        assert!(fades.is_empty());
+        assert_eq!(position, None);
+    }
+
+    #[test]
+    fn cli_rect_partially_outside_desktop_is_clipped_by_existing_renderer() {
+        let mut state = AppState::default();
+        let mut fades = Vec::new();
+        let mut position = None;
+
+        apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Rect {
+                x1: -2000,
+                y1: 10,
+                x2: -1800,
+                y2: 100,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(state.pinned_rects.len(), 1);
+        assert_eq!(state.pinned_rects[0].x0, -2000);
+        assert_eq!(state.pinned_rects[0].x1, -1800);
+    }
+
+    #[test]
+    fn cli_geometry_outside_desktop_is_rejected_without_mutation() {
+        let original = AppState::default();
+        let mut state = original.clone();
+        let mut fades = Vec::new();
+        let mut position = None;
+
+        let rect_error = apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Rect {
+                x1: 3000,
+                y1: 100,
+                x2: 3100,
+                y2: 200,
+            },
+        )
+        .unwrap_err();
+        assert!(rect_error.is_code("outside_desktop"));
+
+        let magnifier_error = apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Magnifier {
+                x: 3000,
+                y: 100,
+                zoom: 2.0,
+            },
+        )
+        .unwrap_err();
+        assert!(magnifier_error.is_code("outside_desktop"));
+        assert_eq!(state, original);
+        assert_eq!(position, None);
     }
 
     mod spotlight_tests {
