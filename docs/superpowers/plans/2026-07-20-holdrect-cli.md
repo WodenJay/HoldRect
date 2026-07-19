@@ -1910,6 +1910,7 @@ Coordinates are signed physical pixels in the Windows virtual-desktop coordinate
 - [ ] **Step 2: Format and run the complete test suite with one job**
 
 ```powershell
+cargo fmt --all
 cargo fmt --all -- --check
 cargo test -j 1
 ```
@@ -1965,4 +1966,4 @@ Expected: only intended task files are present before the commit, `git diff --ch
 
 - [ ] **Step 6: Review gate before branch completion**
 
-Use a fresh `ultra-reviewer` for this cross-cutting CLI/IPC feature. Require review of correctness/regressions, TDD coverage, Win32 handle/error paths, process lifecycle, simplicity, and the actual final diff. Apply accepted fixes through one worker, rerun affected focused tests plus `cargo test -j 1`, and repeat focused review only if the fixes materially change behavior.
+Stop and return control to the parent orchestrator. The parent launches a fresh `ultra-reviewer` for correctness/regressions, TDD coverage, Win32 handle/error paths, process lifecycle, simplicity, and the actual final diff. If fixes are accepted, the parent launches exactly one fix worker, reruns affected focused tests plus `cargo test -j 1`, and repeats focused review only if the fixes materially change behavior. Ordinary task workers must not launch or coordinate subagents.
