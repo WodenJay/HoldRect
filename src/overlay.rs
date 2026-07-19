@@ -1322,8 +1322,10 @@ mod tests {
             },
         ];
 
-        retain_active_fades(&mut fades, first + Duration::from_millis(301));
+        retain_active_fades(&mut fades, first + Duration::from_millis(299));
+        assert_eq!(fades.len(), 2);
 
+        retain_active_fades(&mut fades, first + Duration::from_millis(300));
         assert_eq!(fades.len(), 1);
         assert_eq!(fades[0].started_at, second);
     }
