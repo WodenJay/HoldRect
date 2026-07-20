@@ -20,6 +20,7 @@
 - `cargo build` / `cargo test` 最大并发数设置为1, 尽可能的**降低开发过程的内存占用**。
 - 不要启动 `rust-analyzer`、`cargo check --watch`、`cargo watch`、`clippy --all-targets` 这类后台持续检查任务。
 - 需要验证代码时优先运行最小范围的 `cargo test`，例如指定 package、test name 或 bin；只有最终确认时再运行完整 `cargo test`。
+- Do not use `cargo fmt`.
 
 ## TOOLS
 
