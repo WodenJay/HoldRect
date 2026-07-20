@@ -7,8 +7,8 @@ pub enum InputEvent {
     MouseMove { x: i32, y: i32 },
     DigitPressed(u8),
     EscapePressed,
-    ToggleHelp, // modifier + ` pressed
-    HideHelp,   // modifier or ` released
+    ToggleHelp,             // modifier + ` pressed
+    HideHelp,               // modifier or ` released
     ScrollUp,               // magnifier zoom in
     ScrollDown,             // magnifier zoom out
     FirstLaunch,            // first instance started

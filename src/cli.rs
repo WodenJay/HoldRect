@@ -7,17 +7,8 @@ pub const MAX_ZOOM: f64 = 8.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CliCommand {
-    Rect {
-        x1: i32,
-        y1: i32,
-        x2: i32,
-        y2: i32,
-    },
-    Magnifier {
-        x: i32,
-        y: i32,
-        zoom: f64,
-    },
+    Rect { x1: i32, y1: i32, x2: i32, y2: i32 },
+    Magnifier { x: i32, y: i32, zoom: f64 },
     Clear,
 }
 
@@ -65,7 +56,9 @@ pub fn parse_startup_args(args: &[String]) -> Result<StartupMode, CommandError> 
         return Ok(StartupMode::Resident { first_launch: true });
     }
     if args.len() == 1 && args[0] == "--daemon" {
-        return Ok(StartupMode::Resident { first_launch: false });
+        return Ok(StartupMode::Resident {
+            first_launch: false,
+        });
     }
     if args.len() == 1 && args[0] == "--mem-report" {
         return Ok(StartupMode::MemoryReport);
@@ -131,10 +124,7 @@ pub fn encode_request(command: &CliCommand) -> String {
 
 pub fn decode_request(bytes: &[u8]) -> Result<CliCommand, CommandError> {
     let line = decode_line(bytes)?;
-    let args: Vec<String> = line
-        .split_ascii_whitespace()
-        .map(str::to_owned)
-        .collect();
+    let args: Vec<String> = line.split_ascii_whitespace().map(str::to_owned).collect();
     match parse_startup_args(&args)? {
         StartupMode::Client(command) => Ok(command),
         _ => Err(CommandError::new(
@@ -181,9 +171,9 @@ fn decode_line(bytes: &[u8]) -> Result<&str, CommandError> {
             "wire frame exceeds 512 bytes",
         ));
     }
-    let body = bytes.strip_suffix(b"\n").ok_or_else(|| {
-        CommandError::new("invalid_frame", "wire frame must end with newline")
-    })?;
+    let body = bytes
+        .strip_suffix(b"\n")
+        .ok_or_else(|| CommandError::new("invalid_frame", "wire frame must end with newline"))?;
     if body.contains(&b'\r') || body.contains(&b'\n') {
         return Err(CommandError::new(
             "invalid_frame",
@@ -223,7 +213,9 @@ mod tests {
     fn daemon_selects_silent_resident_mode() {
         assert_eq!(
             parse_startup_args(&args(&["--daemon"])).unwrap(),
-            StartupMode::Resident { first_launch: false }
+            StartupMode::Resident {
+                first_launch: false
+            }
         );
     }
 
