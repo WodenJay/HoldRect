@@ -30,8 +30,14 @@ pub enum SingleInstance {
 /// program lifetime, otherwise the mutex will be released.
 pub fn try_acquire() -> Result<SingleInstance, windows::core::Error> {
     unsafe {
-        let mutex_name: Vec<u16> = "Global\\HoldRect_SingleInstance\0".encode_utf16().collect();
-        let handle = CreateMutexW(None, false, windows::core::PCWSTR(mutex_name.as_ptr()))?;
+        let mutex_name: Vec<u16> = "Global\\HoldRect_SingleInstance\0"
+            .encode_utf16()
+            .collect();
+        let handle = CreateMutexW(
+            None,
+            false,
+            windows::core::PCWSTR(mutex_name.as_ptr()),
+        )?;
         // GetLastError returns ERROR_ALREADY_EXISTS (183) if mutex already existed
         let last_error = windows::Win32::Foundation::GetLastError();
         if last_error == windows::Win32::Foundation::WIN32_ERROR(183) {
@@ -50,7 +56,7 @@ pub fn try_acquire() -> Result<SingleInstance, windows::core::Error> {
 ///
 /// Silently exits if the window can't be found (main instance may have just closed).
 pub fn notify_existing_instance() {
-    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::Foundation::{WPARAM, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowW, PostMessageW, RegisterWindowMessageW,
     };
@@ -92,9 +98,7 @@ mod tests {
         match result {
             Ok(SingleInstance::First(handle)) => {
                 if !handle.is_invalid() {
-                    unsafe {
-                        let _ = CloseHandle(handle);
-                    }
+                    unsafe { let _ = CloseHandle(handle); }
                 }
             }
             Ok(SingleInstance::AlreadyRunning) => {
@@ -133,9 +137,7 @@ mod tests {
         }
 
         if !handle.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
+            unsafe { let _ = CloseHandle(handle); }
         }
     }
 
@@ -153,16 +155,8 @@ mod tests {
             _ => panic!("Second mutex should return Ok(First)"),
         };
 
-        if !handle1.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(handle1);
-            }
-        }
-        if !handle2.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(handle2);
-            }
-        }
+        if !handle1.is_invalid() { unsafe { let _ = CloseHandle(handle1); } }
+        if !handle2.is_invalid() { unsafe { let _ = CloseHandle(handle2); } }
     }
 
     #[test]
@@ -174,11 +168,7 @@ mod tests {
             _ => panic!("First acquire should succeed"),
         };
 
-        if !handle.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
-        }
+        if !handle.is_invalid() { unsafe { let _ = CloseHandle(handle); } }
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         let handle2 = match test_try_acquire_with_name(mutex_name) {
@@ -186,11 +176,7 @@ mod tests {
             _ => panic!("Should acquire after handle closed"),
         };
 
-        if !handle2.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(handle2);
-            }
-        }
+        if !handle2.is_invalid() { unsafe { let _ = CloseHandle(handle2); } }
     }
 
     fn test_try_acquire_with_name(name: &str) -> Result<SingleInstance, windows::core::Error> {

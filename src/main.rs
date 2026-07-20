@@ -1,13 +1,13 @@
 #![windows_subsystem = "windows"]
 
+mod cli;
 #[cfg(windows)]
 mod autostart;
-mod cli;
+#[cfg(windows)]
+mod ipc;
 mod config;
 #[cfg(windows)]
 mod hook;
-#[cfg(windows)]
-mod ipc;
 mod magnifier;
 mod mem_report;
 mod overlay;
@@ -156,7 +156,11 @@ fn run_resident(first_launch: bool) {
         config.modifier_vk_codes.clone(),
     );
     #[cfg(windows)]
-    let _ipc_thread = crate::ipc::start_server(crate::ipc::PIPE_NAME.to_owned(), command_tx, proxy);
+    let _ipc_thread = crate::ipc::start_server(
+        crate::ipc::PIPE_NAME.to_owned(),
+        command_tx,
+        proxy,
+    );
 
     if first_launch {
         let _ = input_tx.send(InputEvent::FirstLaunch);

@@ -16,14 +16,14 @@ use winit::platform::windows::WindowAttributesExtWindows;
 #[cfg(windows)]
 use windows::Win32::Foundation::HWND;
 
-use crate::cli::CliCommand;
-use crate::cli::CommandEnvelope;
-use crate::cli::CommandError;
 use crate::config::AppConfig;
 use crate::config::ColorMode;
 #[cfg(windows)]
 use crate::popup::gdi_renderer::GdiRenderer;
 use crate::popup::PopupManager;
+use crate::cli::CliCommand;
+use crate::cli::CommandError;
+use crate::cli::CommandEnvelope;
 use crate::state::normalize_rect;
 use crate::state::process_event;
 use crate::state::AppState;
@@ -397,9 +397,7 @@ impl ApplicationHandler for App {
                 // Register custom message for single-instance notification
                 {
                     let msg_name: Vec<u16> = crate::single_instance::ALREADY_RUNNING_MSG_NAME
-                        .encode_utf16()
-                        .chain(std::iter::once(0))
-                        .collect();
+                        .encode_utf16().chain(std::iter::once(0)).collect();
                     let msg_id = RegisterWindowMessageW(windows::core::PCWSTR(msg_name.as_ptr()));
                     if msg_id != 0 {
                         ALREADY_RUNNING_MSG_ID.store(msg_id, Ordering::Relaxed);
@@ -2864,7 +2862,13 @@ modifier = "Ctrl""#;
         }];
         let mut position = Some((50, 50));
 
-        apply_command(&mut state, &mut fades, &mut position, &CliCommand::Clear).unwrap();
+        apply_command(
+            &mut state,
+            &mut fades,
+            &mut position,
+            &CliCommand::Clear,
+        )
+        .unwrap();
 
         assert_eq!(state.drawing, DrawingState::Armed);
         assert!(state.pinned_rects.is_empty());

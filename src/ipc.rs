@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use std::time::Instant;
 use windows::core::{Error as WindowsError, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
-    GENERIC_READ, GENERIC_WRITE, HANDLE, WIN32_ERROR,
+    CloseHandle, GetLastError, HANDLE, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+    GENERIC_READ, GENERIC_WRITE, WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE,
@@ -72,8 +72,13 @@ fn read_line(handle: HANDLE) -> Result<Vec<u8>, CommandError> {
         let capacity = remaining.min(chunk.len());
         let mut read = 0;
         unsafe {
-            ReadFile(handle, Some(&mut chunk[..capacity]), Some(&mut read), None)
-                .map_err(|error| io_error("pipe_read", error.to_string()))?;
+            ReadFile(
+                handle,
+                Some(&mut chunk[..capacity]),
+                Some(&mut read),
+                None,
+            )
+            .map_err(|error| io_error("pipe_read", error.to_string()))?;
         }
         if read == 0 {
             return Err(io_error("pipe_read", "named pipe closed before newline"));
@@ -104,10 +109,7 @@ fn create_server_pipe(pipe_name: &str) -> Result<OwnedHandle, CommandError> {
         )
     };
     if handle.is_invalid() {
-        Err(io_error(
-            "pipe_create",
-            WindowsError::from_win32().to_string(),
-        ))
+        Err(io_error("pipe_create", WindowsError::from_win32().to_string()))
     } else {
         Ok(OwnedHandle(handle))
     }
@@ -120,8 +122,7 @@ fn serve_connected_pipe(
 ) -> Result<(), CommandError> {
     match unsafe { ConnectNamedPipe(pipe.0, None) } {
         Ok(()) => {}
-        Err(error)
-            if same_win32_error(&error, ERROR_PIPE_CONNECTED)
+        Err(error) if same_win32_error(&error, ERROR_PIPE_CONNECTED)
             // ERROR_PIPE_CLOSING (232): client connected and disconnected before
             // ConnectNamedPipe completed; treat as connected, the subsequent
             // read will detect the broken pipe.
@@ -140,9 +141,9 @@ fn serve_connected_pipe(
                         .send(CommandEnvelope { command, reply_tx })
                         .map_err(|_| io_error("resident_stopped", "resident event loop stopped"))?;
                     wake();
-                    reply_rx.recv().map_err(|_| {
-                        io_error("resident_stopped", "resident reply channel closed")
-                    })?
+                    reply_rx
+                        .recv()
+                        .map_err(|_| io_error("resident_stopped", "resident reply channel closed"))?
                 }
                 Err(error) => Err(error),
             };
@@ -224,10 +225,7 @@ fn open_client(pipe_name: &str, deadline: Instant) -> Result<OwnedHandle, Comman
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
-                return Err(io_error(
-                    "pipe_not_found",
-                    "HoldRect command pipe is not ready",
-                ));
+                return Err(io_error("pipe_not_found", "HoldRect command pipe is not ready"));
             }
             Err(error) if same_win32_error(&error, ERROR_PIPE_BUSY) => {
                 saw_busy = true;
@@ -345,8 +343,7 @@ mod tests {
         let _ = ready.wait();
         match unsafe { ConnectNamedPipe(server_pipe.0, None) } {
             Ok(()) => {}
-            Err(error)
-                if same_win32_error(&error, ERROR_PIPE_CONNECTED)
+            Err(error) if same_win32_error(&error, ERROR_PIPE_CONNECTED)
                 // ERROR_PIPE_CLOSING (232): client connected and disconnected before
                 // ConnectNamedPipe completed; treat as connected.
                 || same_win32_error(&error, WIN32_ERROR(232u32)) => {}
@@ -367,7 +364,11 @@ mod tests {
         };
         ready.wait();
 
-        let client = open_client(&pipe_name, Instant::now() + Duration::from_secs(2)).unwrap();
+        let client = open_client(
+            &pipe_name,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         write_all(client.0, b"cl").unwrap();
         write_all(client.0, b"ear\n").unwrap();
         drop(client);
@@ -384,8 +385,11 @@ mod tests {
             let command_tx = command_tx.clone();
             move || serve_connected_pipe(first_pipe, command_tx, || {})
         });
-        let first_client =
-            open_client(&pipe_name, Instant::now() + Duration::from_secs(2)).unwrap();
+        let first_client = open_client(
+            &pipe_name,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         write_all(first_client.0, &vec![b'x'; MAX_WIRE_BYTES]).unwrap();
         write_all(first_client.0, b"\n").unwrap();
         let response = read_line(first_client.0).unwrap();
@@ -395,10 +399,16 @@ mod tests {
         first_server.join().unwrap().unwrap();
 
         let second_pipe = create_server_pipe(&pipe_name).unwrap();
-        let second_server =
-            std::thread::spawn(move || serve_connected_pipe(second_pipe, command_tx, || {}));
+        let second_server = std::thread::spawn(move || {
+            serve_connected_pipe(second_pipe, command_tx, || {})
+        });
         let app = std::thread::spawn(move || {
-            command_rx.recv().unwrap().reply_tx.send(Ok(())).unwrap();
+            command_rx
+                .recv()
+                .unwrap()
+                .reply_tx
+                .send(Ok(()))
+                .unwrap();
         });
         assert_eq!(
             send_command(
@@ -425,7 +435,12 @@ mod tests {
         });
         let app = std::thread::spawn(move || {
             for _ in 0..2 {
-                command_rx.recv().unwrap().reply_tx.send(Ok(())).unwrap();
+                command_rx
+                    .recv()
+                    .unwrap()
+                    .reply_tx
+                    .send(Ok(()))
+                    .unwrap();
             }
         });
 
@@ -474,7 +489,11 @@ mod tests {
         let (command_tx, _command_rx) = mpsc::channel();
         let server = std::thread::spawn(move || serve_connected_pipe(pipe, command_tx, || {}));
 
-        let client = open_client(&pipe_name, Instant::now() + Duration::from_secs(2)).unwrap();
+        let client = open_client(
+            &pipe_name,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         write_all(client.0, b"cl").unwrap();
         drop(client);
 
@@ -507,10 +526,19 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel();
         let server = std::thread::spawn(move || serve_connected_pipe(pipe, command_tx, || {}));
         let app = std::thread::spawn(move || {
-            command_rx.recv().unwrap().reply_tx.send(Ok(())).unwrap();
+            command_rx
+                .recv()
+                .unwrap()
+                .reply_tx
+                .send(Ok(()))
+                .unwrap();
         });
 
-        let client = open_client(&pipe_name, Instant::now() + Duration::from_secs(2)).unwrap();
+        let client = open_client(
+            &pipe_name,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         write_all(client.0, b"clear\n").unwrap();
         drop(client);
 
