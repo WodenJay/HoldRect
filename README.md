@@ -52,6 +52,23 @@ Then hold `Alt` + drag anywhere. That's it.
 | Magnifier | `Alt` + `3` (scroll to zoom) |
 | View all shortcuts | Hold `` Alt + ` `` |
 
+## CLI / AI Control
+
+The same `holdrect.exe` can control the resident overlay from scripts and AI tools. A command automatically starts HoldRect when it is not already running.
+
+```powershell
+holdrect rect 100 200 500 400
+holdrect magnifier 800 450
+holdrect magnifier 800 450 3
+holdrect clear
+```
+
+- `rect x1 y1 x2 y2` adds a rectangle that remains until `clear`.
+- `magnifier x y [zoom]` shows one fixed magnifier; zoom defaults to `2.0` and accepts `1.5` through `8.0`.
+- `clear` removes all pinned/fading rectangles, cancels the active drawing, and hides the magnifier.
+
+Coordinates are signed physical pixels in the Windows virtual-desktop coordinate space, so monitors left of the primary display can use negative `x` values.
+
 ## Installation
 
 ### One-liner
