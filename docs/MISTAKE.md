@@ -15,3 +15,4 @@
 - `f32` 对 Unix 时间戳（~1.7×10⁹）精度不足，`as_secs_f32()` 会丢失小数部分，导致 `time % 1.0 == 0.0`。彩虹动画必须用 `as_secs_f64()` + `.fract()` 取小数部分再转 `f32`
 - 曼哈顿颜色距离求和后 `as u8` 截断：蓝/紫色像素距离 >255 溢出回绕，被误判为背景色而变透明。颜色距离用 `u16` 或更大类型
 - `CheckMenuItem::new(text, enabled, checked, accelerator)` 第2个参数是 `enabled`（是否可点击），第3个是 `checked`（是否勾选）。顺序搞反会导致菜单灰化或默认勾选异常
+- 临时 checkout 提交哈希做基线对比后，不能只 checkout 回同一个哈希（仍是 detached HEAD）；必须 `git switch <原分支>`。提交前用 `git status --branch` 确认 HEAD 已附着分支
